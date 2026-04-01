@@ -1,7 +1,7 @@
 # ==========================================================
-# [dashboard.py] ❄️ Snowball TS 웹 대시보드 v5
+# [dashboard.py] ❄️ Snowball TS 웹 대시보드 V23.01
 # 실행: streamlit run dashboard.py
-# 변경: 모바일 폰트 크기 확대 + 전체 가독성/대비 개선
+# V23.01 업데이트: VWAP 엔진 패널, 변동성 엔진 패널, V_VWAP 모드, 멀티코어 아키텍처 표시
 # ==========================================================
 
 import streamlit as st
@@ -25,12 +25,10 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&family=Space+Mono:wght@400;700&display=swap');
 
-/* ── 모바일 뷰포트 최적화 ── */
 @viewport { width: device-width; zoom: 1; }
 
-/* ── 전역 기본 폰트 크기: 모바일에서 16px 기준으로 rem 계산 ── */
 html {
-    font-size: 19px !important;   /* 기준 (모바일 최적화) */
+    font-size: 19px !important;
 }
 
 html, body,
@@ -39,10 +37,9 @@ html, body,
     background: #0d0d0f !important;
     color: #e8e8e8 !important;
     font-family: 'Noto Sans KR', sans-serif !important;
-    -webkit-text-size-adjust: 100% !important;  /* iOS 자동 폰트 크기 조정 방지 */
+    -webkit-text-size-adjust: 100% !important;
 }
 
-/* ── Streamlit 기본 UI 숨김 ── */
 [data-testid="stHeader"],
 [data-testid="stToolbar"],
 [data-testid="stDecoration"],
@@ -51,12 +48,10 @@ section[data-testid="stSidebar"],
 .stDeployButton { display: none !important; }
 #MainMenu, footer, header { visibility: hidden !important; }
 
-/* ── 스크롤바 ── */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: #111; }
 ::-webkit-scrollbar-thumb { background: #3a3a55; border-radius: 4px; }
 
-/* ── 탭 ── */
 .stTabs [data-baseweb="tab-list"] {
     background: #111120 !important;
     border-radius: 12px !important;
@@ -68,8 +63,8 @@ section[data-testid="stSidebar"],
     font-weight: 600 !important;
     border-radius: 8px !important;
     font-family: 'Noto Sans KR', sans-serif !important;
-    font-size: 0.95rem !important;       /* ↑ 탭 글자 크기 */
-    padding: 0.5rem 0.8rem !important;   /* ↑ 탭 터치 영역 */
+    font-size: 0.95rem !important;
+    padding: 0.5rem 0.8rem !important;
 }
 .stTabs [aria-selected="true"] {
     background: #1e1e35 !important;
@@ -77,7 +72,6 @@ section[data-testid="stSidebar"],
     border-bottom: 2px solid #4488ff !important;
 }
 
-/* ── 버튼 ── */
 .stButton > button {
     background: #1e1e2e !important;
     color: #ccc !important;
@@ -85,10 +79,10 @@ section[data-testid="stSidebar"],
     border-radius: 10px !important;
     font-family: 'Noto Sans KR', sans-serif !important;
     font-weight: 600 !important;
-    font-size: 0.95rem !important;       /* ↑ */
-    padding: 0.55rem 1rem !important;    /* ↑ 터치 영역 */
+    font-size: 0.95rem !important;
+    padding: 0.55rem 1rem !important;
     transition: all 0.15s ease !important;
-    min-height: 44px !important;         /* 모바일 최소 터치 높이 */
+    min-height: 44px !important;
 }
 .stButton > button:hover {
     background: #252540 !important;
@@ -96,22 +90,20 @@ section[data-testid="stSidebar"],
     color: #eee !important;
 }
 
-/* ── 토글 ── */
 .stToggle label,
 [data-testid="stToggleLabel"] {
-    color: #bbb !important;              /* ↑ #aaa → #bbb */
-    font-size: 0.92rem !important;       /* ↑ */
+    color: #bbb !important;
+    font-size: 0.92rem !important;
 }
 
-/* ── 텍스트 입력 ── */
 .stTextInput > div > div > input {
     background: #1c1c28 !important;
     border: 1px solid #2a2a45 !important;
     border-radius: 10px !important;
     color: #e8e8e8 !important;
     font-family: 'Noto Sans KR', sans-serif !important;
-    font-size: 1rem !important;          /* ↑ */
-    padding: 0.7rem 1rem !important;     /* ↑ */
+    font-size: 1rem !important;
+    padding: 0.7rem 1rem !important;
     min-height: 44px !important;
 }
 .stTextInput > div > div > input::placeholder {
@@ -122,7 +114,6 @@ section[data-testid="stSidebar"],
     box-shadow: 0 0 0 3px rgba(59,111,245,0.2) !important;
 }
 
-/* ── expander ── */
 [data-testid="stExpander"] {
     background: #111118 !important;
     border: 1px solid #22223a !important;
@@ -130,19 +121,17 @@ section[data-testid="stSidebar"],
 }
 [data-testid="stExpander"] summary {
     color: #bbb !important;
-    font-size: 0.92rem !important;       /* ↑ */
+    font-size: 0.92rem !important;
 }
 
-/* ── info 박스 ── */
 [data-testid="stAlert"] {
     background: #111120 !important;
     border: 1px solid #22223a !important;
     border-radius: 10px !important;
-    color: #bbb !important;              /* ↑ #aaa → #bbb */
-    font-size: 0.92rem !important;       /* ↑ */
+    color: #bbb !important;
+    font-size: 0.92rem !important;
 }
 
-/* ── Metric ── */
 div[data-testid="stMetric"] {
     background: #12121e;
     border: 1px solid #22223a;
@@ -154,8 +143,8 @@ div[data-testid="stMetricValue"] {
     color: #fff !important;
 }
 div[data-testid="stMetricLabel"] {
-    color: #aaa !important;              /* ↑ */
-    font-size: 0.82rem !important;       /* ↑ */
+    color: #aaa !important;
+    font-size: 0.82rem !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -187,6 +176,8 @@ def get_sniper(t):
     return float(load_json("sniper_multiplier.json", d).get(t, d.get(t,1.0)))
 def get_reverse(t): return load_json("reverse_config.json",{}).get(t,{"is_active":False,"day_count":0,"exit_target":0.0})
 def get_escrow(t):  return float(load_json("trade_locks.json",{}).get(f"ESCROW_{t}",0.0))
+def get_upward_sniper(): return load_json("trade_locks.json",{}).get("UPWARD_SNIPER_MODE", False)
+def get_vwap_cache(): return load_json("vwap_cache.json", {})
 
 def calc_holdings(ticker, ledger):
     qty, invested = 0, 0.0
@@ -229,11 +220,110 @@ def get_price(ticker):
     except: pass
     return {"price":0.0,"prev":0.0,"high":0.0,"low":0.0}
 
+@st.cache_data(ttl=300)
+def get_volatility_data():
+    """변동성 엔진 데이터 (5분 캐시)"""
+    result = {"TQQQ": {}, "SOXL": {}}
+    try:
+        import yfinance as yf
+        import pandas as pd
+        import numpy as np
+
+        # TQQQ: VXN 기반
+        vxn = yf.download("^VXN", period="1y", interval="1d", progress=False)
+        if not vxn.empty:
+            if isinstance(vxn.columns, pd.MultiIndex):
+                vxn.columns = vxn.columns.droplevel(1)
+            closes = vxn['Close'].dropna().tail(252)
+            current_vxn = float(closes.iloc[-1])
+            mean_vxn = float(closes.mean())
+            weight = current_vxn / mean_vxn if mean_vxn > 0 else 1.0
+            result["TQQQ"] = {
+                "metric": current_vxn,
+                "metric_mean": mean_vxn,
+                "weight": weight,
+                "label": "VXN (나스닥 공포지수)",
+                "direction": "SELL" if weight > 1.0 else "BUY"
+            }
+    except: pass
+
+    try:
+        import yfinance as yf
+        import pandas as pd
+        import numpy as np
+
+        # SOXL: SOXX HV 기반
+        soxx = yf.download("SOXX", period="1y", interval="1d", progress=False)
+        if not soxx.empty:
+            if isinstance(soxx.columns, pd.MultiIndex):
+                soxx.columns = soxx.columns.droplevel(1)
+            closes = soxx['Close'].dropna()
+            log_ret = np.log(closes / closes.shift(1))
+            hv = log_ret.rolling(20).std() * np.sqrt(252) * 100
+            hv_valid = hv.dropna().tail(252)
+            latest_hv = float(hv_valid.iloc[-1])
+            mean_hv = float(hv_valid.mean())
+            weight = latest_hv / mean_hv if mean_hv > 0 else 1.0
+            result["SOXL"] = {
+                "metric": latest_hv,
+                "metric_mean": mean_hv,
+                "weight": weight,
+                "label": "SOXX HV20 (반도체 실현변동성)",
+                "direction": "SELL" if weight > 1.0 else "BUY"
+            }
+    except: pass
+
+    return result
+
 def get_first_ledger_date(ticker, ledger):
     recs = [r for r in ledger if r.get('ticker')==ticker and r.get('side')=='BUY']
     if recs:
         return sorted([r.get('date','') for r in recs])[0]
     return ""
+
+def get_vwap_window_info():
+    """VWAP 30분 윈도우 현재 상태"""
+    try:
+        est = pytz.timezone('US/Eastern')
+        now = datetime.datetime.now(est)
+        if now.hour == 15 and 30 <= now.minute <= 59:
+            bin_idx = now.minute - 30
+            remaining = 30 - (bin_idx + 1)
+            return {
+                "active": True,
+                "bin_idx": bin_idx,
+                "elapsed": bin_idx + 1,
+                "remaining": remaining,
+                "pct": round((bin_idx + 1) / 30 * 100)
+            }
+    except: pass
+    return {"active": False, "bin_idx": -1, "elapsed": 0, "remaining": 30, "pct": 0}
+
+def get_market_status():
+    """미국 장 상태"""
+    try:
+        import pandas_market_calendars as mcal
+        est = pytz.timezone('US/Eastern')
+        now = datetime.datetime.now(est)
+        nyse = mcal.get_calendar('NYSE')
+        sched = nyse.schedule(start_date=now.date(), end_date=now.date())
+        if sched.empty:
+            return "CLOSED_HOLIDAY"
+        mopen  = sched.iloc[0]['market_open'].astimezone(est)
+        mclose = sched.iloc[0]['market_close'].astimezone(est)
+        pre_open = mopen.replace(hour=4, minute=0)
+        if now < pre_open:
+            return "PRE_PRE"
+        elif now < mopen:
+            return "PREMARKET"
+        elif now < mclose:
+            return "OPEN"
+        elif now < mclose.replace(hour=20, minute=0):
+            return "AFTERHOURS"
+        else:
+            return "CLOSED"
+    except:
+        return "UNKNOWN"
 
 
 # ════════════════════════════════════════════════════════
@@ -260,7 +350,6 @@ def show_login():
 
     _, center, _ = st.columns([1, 1.05, 1])
     with center:
-        # ── 방패 카드 ───────────────────────────────────
         st.markdown("""
 <div style="text-align:center; padding:2.5rem 2rem 2rem;
     background:linear-gradient(160deg,#0e0e1a,#13131f,#0a0a14);
@@ -271,8 +360,6 @@ def show_login():
     width:220px;height:220px;
     background:radial-gradient(ellipse,rgba(30,80,220,.2) 0%,transparent 70%);
     pointer-events:none;"></div>
-
-  <!-- 방패 SVG -->
   <div style="margin:0 auto 1.5rem;width:100px;height:100px;">
     <div style="width:100px;height:100px;
       background:radial-gradient(ellipse at 35% 35%,#1e3a8a 0%,#0d1f5c 50%,#060d2e 100%);
@@ -294,28 +381,22 @@ def show_login():
       </svg>
     </div>
   </div>
-
-  <!-- 텍스트 -->
   <div style="font-family:'Space Mono',monospace;font-size:.95rem;font-weight:700;
     color:#5599ff;letter-spacing:.28em;margin-bottom:.7rem;
     text-shadow:0 0 22px rgba(68,136,255,.6);">SNIPER COMMAND</div>
-
   <div style="font-size:1.45rem;font-weight:900;color:#fff;margin-bottom:.6rem;
-    letter-spacing:.02em;">✨ 듀얼코어 하이브리드 ✨</div>
-
+    letter-spacing:.02em;">✨ VWAP 자율주행 엔진 ✨</div>
   <div style="display:inline-block;background:rgba(255,255,255,.06);
     border:1px solid rgba(255,255,255,.12);border-radius:20px;
     padding:.25rem 1rem;font-size:.82rem;color:#8899bb;
-    margin-bottom:.5rem;letter-spacing:.03em;">V21.5 다이내믹 스노우볼 TrueSync</div>
-
+    margin-bottom:.5rem;letter-spacing:.03em;">V23.01 멀티코어 하이브리드 아키텍처</div>
   <div style="font-size:.88rem;color:#ee5555;margin-top:.4rem;font-weight:500;">
     인가된 총사령관만 접근을 허가합니다.</div>
 </div>
 """, unsafe_allow_html=True)
 
-        # ── 입력 필드 ────────────────────────────────────
         st.markdown('<p style="color:#99aacc;font-size:.9rem;font-weight:600;margin-bottom:.25rem;">총사령관 ID</p>', unsafe_allow_html=True)
-        st.text_input("총사령관 ID", placeholder="ID를 입력하세요 (pipiosbot 또는 hambot)",
+        st.text_input("총사령관 ID", placeholder="ID를 입력하세요",
                       key="login_id", label_visibility="collapsed")
 
         st.markdown('<p style="color:#99aacc;font-size:.9rem;font-weight:600;margin:.65rem 0 .25rem;">보안 암호를 입력하세요</p>', unsafe_allow_html=True)
@@ -324,7 +405,6 @@ def show_login():
 
         st.markdown('<div style="height:.6rem;"></div>', unsafe_allow_html=True)
 
-        # ── 접속 버튼 ────────────────────────────────────
         st.markdown('<div class="login-btn">', unsafe_allow_html=True)
         if st.button("🚀  사령부 접속", use_container_width=True, key="login_btn"):
             secret = os.getenv("DASHBOARD_PASSWORD", "snowball2025")
@@ -340,7 +420,6 @@ def show_login():
 </div>""", unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # ── 힌트 ─────────────────────────────────────────
         st.markdown("""
 <div style="text-align:center;margin-top:.9rem;color:#5566aa;font-size:.82rem;line-height:1.8;">
   기본 암호:
@@ -359,7 +438,7 @@ def show_dashboard():
     <style>
     .block-container {
         padding: 1rem 1rem 2rem !important;
-        max-width: 620px !important;
+        max-width: 640px !important;
         margin: 0 auto !important;
     }
     </style>
@@ -368,12 +447,35 @@ def show_dashboard():
     ledger  = get_ledger()
     history = get_history()
     tickers = get_tickers()
+    market_status = get_market_status()
+    vwap_win = get_vwap_window_info()
+    vwap_cache = get_vwap_cache()
+    upward_sniper = get_upward_sniper()
 
     # ── 헤더 ─────────────────────────────────────────────
-    st.markdown("""
-<div style="display:flex;align-items:center;gap:.7rem;padding:.5rem 0 .3rem;">
-  <span style="font-size:1.8rem;">☃️</span>
-  <span style="font-size:1.6rem;font-weight:900;color:#fff;">Snowball TS</span>
+    market_badge_map = {
+        "OPEN":         ('<span style="background:#0a3a1a;border:1px solid #1a6a3a;border-radius:6px;padding:.15rem .6rem;font-size:.8rem;color:#44ee88;font-weight:700;">🟢 정규장</span>', "#0a3a1a"),
+        "PREMARKET":    ('<span style="background:#1a1a0a;border:1px solid #5a5a20;border-radius:6px;padding:.15rem .6rem;font-size:.8rem;color:#cccc44;font-weight:700;">🌅 프리마켓</span>', "#111"),
+        "AFTERHOURS":   ('<span style="background:#1a0a1a;border:1px solid #5a2a5a;border-radius:6px;padding:.15rem .6rem;font-size:.8rem;color:#cc88ff;font-weight:700;">🌙 애프터마켓</span>', "#111"),
+        "CLOSED_HOLIDAY":('<span style="background:#1a0a0a;border:1px solid #5a1a1a;border-radius:6px;padding:.15rem .6rem;font-size:.8rem;color:#ee5555;font-weight:700;">⛔ 휴장일</span>', "#111"),
+        "CLOSED":       ('<span style="background:#111118;border:1px solid #2a2a45;border-radius:6px;padding:.15rem .6rem;font-size:.8rem;color:#778899;font-weight:700;">🌑 장마감</span>', "#111"),
+        "UNKNOWN":      ('<span style="background:#111118;border:1px solid #2a2a45;border-radius:6px;padding:.15rem .6rem;font-size:.8rem;color:#778899;font-weight:700;">⏳ 확인중</span>', "#111"),
+        "PRE_PRE":      ('<span style="background:#111118;border:1px solid #2a2a45;border-radius:6px;padding:.15rem .6rem;font-size:.8rem;color:#778899;font-weight:700;">🌃 개장 전</span>', "#111"),
+    }
+    market_badge, _ = market_badge_map.get(market_status, market_badge_map["UNKNOWN"])
+
+    st.markdown(f"""
+<div style="display:flex;align-items:center;justify-content:space-between;padding:.5rem 0 .2rem;">
+  <div style="display:flex;align-items:center;gap:.7rem;">
+    <span style="font-size:1.8rem;">☃️</span>
+    <div>
+      <span style="font-size:1.5rem;font-weight:900;color:#fff;">Snowball TS</span>
+      <div style="display:inline-block;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
+        border-radius:12px;padding:.1rem .6rem;font-size:.75rem;color:#6677aa;margin-left:.5rem;
+        font-family:'Space Mono',monospace;">V23.01</div>
+    </div>
+  </div>
+  {market_badge}
 </div>
 """, unsafe_allow_html=True)
 
@@ -381,9 +483,9 @@ def show_dashboard():
 <div style="display:inline-block;
   background:linear-gradient(90deg,#2a2010,#3a2e08);
   border:1px solid #5a4a20;border-radius:22px;
-  padding:.38rem 1.3rem;font-size:.95rem;font-weight:700;
-  color:#e0b830;margin:.3rem 0 .7rem;
-  box-shadow:0 2px 14px rgba(180,140,0,.22);">✨ 방치형 자동매매 ✨</div>
+  padding:.38rem 1.3rem;font-size:.92rem;font-weight:700;
+  color:#e0b830;margin:.25rem 0 .6rem;
+  box-shadow:0 2px 14px rgba(180,140,0,.22);">🚀 VWAP 자율주행 · 멀티코어 하이브리드</div>
 """, unsafe_allow_html=True)
 
     col_tog, col_user, col_out = st.columns([1.3, 1.8, 0.7])
@@ -397,14 +499,14 @@ def show_dashboard():
   padding:.45rem .9rem;font-size:.88rem;color:#ccc;
   display:flex;align-items:center;gap:.45rem;">
   <span>🤖</span>
-  <span style="color:#ddd;font-weight:600;">{bot_name}(으)로 전환</span>
+  <span style="color:#ddd;font-weight:600;">{bot_name}</span>
 </div>""", unsafe_allow_html=True)
     with col_out:
         if st.button("🚪", key="logout_btn", help="로그아웃"):
             st.session_state.logged_in = False
             st.rerun()
 
-    tab1, tab2, tab3 = st.tabs(["  📊 현황판  ", "  ⚙️ 조종실  ", "  🏆 역사관  "])
+    tab1, tab2, tab3, tab4 = st.tabs(["  📊 현황판  ", "  🎯 VWAP엔진  ", "  ⚙️ 조종실  ", "  🏆 역사관  "])
 
 
     # ════════════════════════════════════════════════════
@@ -413,32 +515,30 @@ def show_dashboard():
     with tab1:
 
         # ── 계좌 요약 계산 ────────────────────────────────
-        # 계좌 총액  = Σ(예수금잔액 + 보유주식 평가금액)
-        # 가용 예산  = Σ(예수금잔액) − 에스크로
-        # 예수금잔액 = 시드 − 총매수금액 + 총매도금액  ← calc_v14의 rem 값
-        total_cash   = 0.0   # 예수금잔액 합계 (시드 - 매수 + 매도)
-        total_eval   = 0.0   # 보유주식 평가금액 합계
-        total_escrow = 0.0   # 에스크로 합계
+        total_cash   = 0.0
+        total_eval   = 0.0
+        total_escrow = 0.0
 
         for t in tickers:
-            _, _, rem = calc_v14(t, ledger)          # rem = 예수금잔액
+            _, _, rem = calc_v14(t, ledger)
             q, avg_   = calc_holdings(t, ledger)
             pd_       = get_price(t)
             curr_p    = pd_["price"] if pd_["price"] > 0 else avg_
-            eval_val  = q * curr_p                   # 보유주식 평가금액
+            eval_val  = q * curr_p
             esc       = get_escrow(t)
-
             total_cash   += rem
             total_eval   += eval_val
             total_escrow += esc
 
-        # 총 매수금액 = Σ(수량 × 평단가)
         total_invested = sum(
             calc_holdings(t, ledger)[0] * calc_holdings(t, ledger)[1]
             for t in tickers
         )
-        total_account = total_cash + total_eval       # 계좌 총액
-        avail         = max(0, total_cash - total_escrow)  # 가용 예산
+        total_account = total_cash + total_eval
+        avail = max(0, total_cash - total_escrow)
+
+        escrow_sign = "−" if total_escrow > 0 else ""
+        escrow_total_color = "#ff6666" if total_escrow > 0 else "#666688"
 
         st.markdown(f"""
 <div style="background:#111120;border:1px solid #22223a;border-radius:14px;
@@ -465,7 +565,7 @@ def show_dashboard():
     padding:.9rem 1.2rem;border-bottom:1px solid #1a1a2e;">
     <span style="font-size:.95rem;color:#aaa;font-weight:500;">🔒 에스크로</span>
     <span style="font-family:'Space Mono',monospace;font-size:1.05rem;font-weight:700;
-      color:{'#ff6666' if total_escrow>0 else '#666688'};">{'−' if total_escrow>0 else ''}${total_escrow:,.2f}</span>
+      color:{escrow_total_color};">{escrow_sign}${total_escrow:,.2f}</span>
   </div>
   <div style="display:flex;justify-content:space-between;align-items:center;
     padding:.9rem 1.2rem;">
@@ -496,6 +596,7 @@ def show_dashboard():
             is_rev    = rev.get("is_active", False)
             escrow    = get_escrow(ticker)
             sniper_m  = get_sniper(ticker)
+            is_vwap   = (version == "V_VWAP")
 
             t_val, budget, _ = calc_v14(ticker, ledger)
             progress  = min(100.0, round(t_val/split*100, 1)) if split>0 else 0.0
@@ -503,199 +604,248 @@ def show_dashboard():
             star_r    = (target/100) - (target/100)*dep*t_val
             star_p    = math.ceil(avg*(1+star_r)*100)/100.0 if avg>0 else 0.0
             sniper_l  = math.floor(avg*(1-sniper_m*0.10)*100)/100.0 if avg>0 else 0.0
-            q_qty     = math.ceil(qty/4) if qty>0 else 0
             N         = math.floor(budget/avg) if avg>0 else 0
             invest_a  = qty*avg
             start_date = get_first_ledger_date(ticker, ledger)
 
             chg_col   = "#ff6666" if chg>=0 else "#60a5fa"
             chg_sign  = "+" if chg>=0 else ""
-            ver_color = "#ff6666" if is_rev else "#33cc66"
+            high_sign = "+" if high_pct>=0 else ""
+            low_sign  = "+" if low_pct>=0 else ""
 
-            # ── 종목 카드 상단 (웹앱3 스타일) ──────────
-            st.markdown(f"""
-<div style="background:#111120;border:1px solid #1e1e35;border-radius:16px;
-  padding:1.3rem 1.3rem .9rem;margin-bottom:.4rem;">
+            # 버전 배지 색상
+            if is_vwap:
+                ver_color = "#00ccff"; ver_bg = "#00224a"; ver_border = "#004488"
+            elif is_rev:
+                ver_color = "#ff6666"; ver_bg = "#2a0a0a"; ver_border = "#661111"
+            else:
+                ver_color = "#33cc66"; ver_bg = "#0a2a1a"; ver_border = "#116633"
 
-  <!-- 버전 배지 + 진행도 -->
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.7rem;">
-    <div style="background:#1a2a1a;border:1px solid {ver_color}55;border-radius:8px;
-      padding:.2rem .7rem;font-size:.82rem;font-weight:700;color:{ver_color};">Ver {version}</div>
-    <div style="text-align:right;">
-      <div style="font-size:.82rem;color:#999;line-height:1.2;font-weight:500;">진행도</div>
-      <div style="font-family:'Space Mono',monospace;font-size:1.4rem;font-weight:700;color:#fff;line-height:1.1;">{progress}%</div>
-      <div style="font-size:.8rem;color:#8888aa;">{t_val:.4f}T / {int(split)}</div>
+            vwap_buy_ex  = vwap_cache.get(f"{ticker}_buy_executed", 0)
+            vwap_sell_ex = vwap_cache.get(f"{ticker}_sell_executed", 0)
+            escrow_color = "#ff7777" if escrow > 0 else "#666688"
+
+            # ── 조건부 HTML 사전 계산 (f-string 중첩 따옴표 충돌 방지) ──
+            vwap_prefix_html = "🌊 " if is_vwap else ""
+
+            if upward_sniper:
+                upward_badge_html = (
+                    '<div style="background:#1a1a0a;border:1px solid #4a4a20;border-radius:8px;'
+                    'padding:.2rem .6rem;font-size:.78rem;font-weight:700;color:#ddcc44;">'
+                    '🔼 상방스나이퍼 ON</div>'
+                )
+            else:
+                upward_badge_html = ""
+
+            if start_date:
+                start_date_html = (
+                    '<div style="font-size:.88rem;color:#7788aa;margin-bottom:.9rem;font-weight:500;">'
+                    f"📅 {start_date} ~</div>"
+                )
+            else:
+                start_date_html = ""
+
+            # ── 종목 카드: 헤더 (버전배지 + 진행도) ──────
+            card_h = (
+                '<div style="background:#111120;border:1px solid #1e1e35;border-radius:16px;'
+                'padding:1.3rem 1.3rem .9rem;margin-bottom:.2rem;">'
+                '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.7rem;">'
+                f'<div style="background:{ver_bg};border:1px solid {ver_border};border-radius:8px;'
+                f'padding:.2rem .7rem;font-size:.82rem;font-weight:700;color:{ver_color};">'
+                f'{vwap_prefix_html}Ver {version}</div>'
+                '<div style="text-align:right;">'
+                '<div style="font-size:.82rem;color:#999;line-height:1.2;font-weight:500;">진행도</div>'
+                f'<div style="font-family:\'Space Mono\',monospace;font-size:1.4rem;font-weight:700;color:#fff;line-height:1.1;">{progress}%</div>'
+                f'<div style="font-size:.8rem;color:#8888aa;">{t_val:.4f}T / {int(split)}</div>'
+                '</div></div>'
+            )
+            if upward_badge_html:
+                card_h += f'<div style="margin-bottom:.5rem;">{upward_badge_html}</div>'
+
+            # 티커명 + 현재가
+            card_h += (
+                f'<div style="font-size:2.4rem;font-weight:900;color:#fff;line-height:1;'
+                f'margin-bottom:.5rem;letter-spacing:.02em;">{ticker}</div>'
+                f'<div style="font-family:\'Space Mono\',monospace;font-size:1.9rem;font-weight:700;'
+                f'color:{chg_col};line-height:1.1;">${curr:,.2f}</div>'
+                f'<div style="font-size:.95rem;color:{chg_col};margin-bottom:.9rem;font-weight:500;">'
+                f'({chg_sign}{chg:.2f}%)</div>'
+            )
+            # 최고/최저
+            card_h += (
+                '<div style="display:flex;gap:.6rem;margin-bottom:.9rem;">'
+                '<div style="flex:1;background:#1c0e0e;border:1px solid #441a1a;border-radius:9px;padding:.5rem .8rem;">'
+                f'<span style="font-size:.85rem;color:#cc8888;">최고 </span>'
+                f'<span style="font-size:.9rem;color:#ff8888;font-weight:700;">${high:,.2f}</span>'
+                f'<span style="font-size:.82rem;color:#ff8888;"> ({high_sign}{high_pct:.2f}%)</span>'
+                '</div>'
+                '<div style="flex:1;background:#0a0e1e;border:1px solid #1a2855;border-radius:9px;padding:.5rem .8rem;">'
+                f'<span style="font-size:.85rem;color:#8899cc;">최저 </span>'
+                f'<span style="font-size:.9rem;color:#60a5fa;font-weight:700;">${low:,.2f}</span>'
+                f'<span style="font-size:.82rem;color:#60a5fa;"> ({low_sign}{low_pct:.2f}%)</span>'
+                '</div></div>'
+            )
+            if start_date_html:
+                card_h += start_date_html
+            card_h += '</div>'
+            st.markdown(card_h, unsafe_allow_html=True)
+
+            # ── 종목 카드: 기본정보 + 매입정보 ─────────
+            card_info = (
+                '<div style="background:#111120;border:1px solid #1e1e35;border-radius:14px;'
+                'padding:1rem 1.3rem;margin-bottom:.2rem;">'
+                # 기본 정보
+                '<div style="background:#0d0d1c;border:1px solid #1a1a30;border-radius:11px;'
+                'padding:.9rem 1rem;margin-bottom:.6rem;">'
+                '<div style="font-size:.88rem;font-weight:700;color:#aaa;margin-bottom:.7rem;'
+                'border-bottom:1px solid #1a1a30;padding-bottom:.4rem;">기본 정보</div>'
+                '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem;">'
+                '<div><div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">총 시드</div>'
+                f'<div style="font-family:\'Space Mono\',monospace;font-size:.92rem;font-weight:700;color:#ddd;">${seed:,.2f}</div></div>'
+                '<div><div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">사용 중인 금고</div>'
+                f'<div style="font-family:\'Space Mono\',monospace;font-size:.92rem;font-weight:700;color:{escrow_color};">${escrow:,.2f}</div></div>'
+                '<div><div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">오늘 예산</div>'
+                f'<div style="font-family:\'Space Mono\',monospace;font-size:.92rem;font-weight:700;color:#4ade80;">${budget:,.2f}</div></div>'
+                '</div></div>'
+                # 매입 정보
+                '<div style="background:#0d0d1c;border:1px solid #1a1a30;border-radius:11px;padding:.9rem 1rem;">'
+                '<div style="font-size:.88rem;font-weight:700;color:#aaa;margin-bottom:.7rem;'
+                'border-bottom:1px solid #1a1a30;padding-bottom:.4rem;">매입 정보</div>'
+                '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem;">'
+                '<div><div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">평단가</div>'
+                f'<div style="font-family:\'Space Mono\',monospace;font-size:.92rem;font-weight:700;color:#ddd;">${avg:,.2f}</div></div>'
+                '<div><div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">보유 수량</div>'
+                f'<div style="font-family:\'Space Mono\',monospace;font-size:.92rem;font-weight:700;color:#ddd;">{qty}주</div></div>'
+                '<div><div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">매입 금액</div>'
+                f'<div style="font-family:\'Space Mono\',monospace;font-size:.92rem;font-weight:700;color:#fbbf24;">${invest_a:,.2f}</div></div>'
+                '</div></div>'
+                '</div>'
+            )
+            st.markdown(card_info, unsafe_allow_html=True)
+
+            # ── VWAP 모드일 때: VWAP 당일 실행 현황 카드
+            if is_vwap and qty > 0:
+                st.markdown(f"""
+<div style="background:#00112a;border:1px solid #004488;border-radius:14px;
+  padding:1.1rem 1.3rem;margin-bottom:.4rem;">
+  <div style="font-size:.92rem;font-weight:700;color:#44bbff;margin-bottom:.8rem;
+    display:flex;align-items:center;gap:.5rem;">
+    🌊 VWAP 자율주행 — 당일 실행 현황
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem;">
+    <div style="background:#001a3a;border:1px solid #002255;border-radius:9px;padding:.7rem .9rem;">
+      <div style="font-size:.8rem;color:#5599cc;margin-bottom:.2rem;font-weight:500;">오늘 매수 체결</div>
+      <div style="font-family:'Space Mono',monospace;font-size:1.05rem;font-weight:700;color:#44ccff;">{vwap_buy_ex}주</div>
+    </div>
+    <div style="background:#001a3a;border:1px solid #002255;border-radius:9px;padding:.7rem .9rem;">
+      <div style="font-size:.8rem;color:#5599cc;margin-bottom:.2rem;font-weight:500;">오늘 매도 체결</div>
+      <div style="font-family:'Space Mono',monospace;font-size:1.05rem;font-weight:700;color:#ff9944;">{vwap_sell_ex}주</div>
     </div>
   </div>
-
-  <!-- 티커명 크게 -->
-  <div style="font-size:2.4rem;font-weight:900;color:#fff;line-height:1;margin-bottom:.5rem;
-    letter-spacing:.02em;">{ticker}</div>
-
-  <!-- 현재가 -->
-  <div style="font-family:'Space Mono',monospace;font-size:1.9rem;font-weight:700;
-    color:{chg_col};line-height:1.1;">${curr:,.2f}</div>
-  <div style="font-size:.95rem;color:{chg_col};margin-bottom:.9rem;font-weight:500;">
-    ({chg_sign}{chg:.2f}%)</div>
-
-  <!-- 최고/최저 박스 -->
-  <div style="display:flex;gap:.6rem;margin-bottom:.9rem;">
-    <div style="flex:1;background:#1c0e0e;border:1px solid #441a1a;border-radius:9px;
-      padding:.5rem .8rem;">
-      <span style="font-size:.85rem;color:#cc8888;">최고 </span>
-      <span style="font-size:.9rem;color:#ff8888;font-weight:700;">${high:,.2f}</span>
-      <span style="font-size:.82rem;color:#ff8888;"> ({'+' if high_pct>=0 else ''}{high_pct:.2f}%)</span>
-    </div>
-    <div style="flex:1;background:#0a0e1e;border:1px solid #1a2855;border-radius:9px;
-      padding:.5rem .8rem;">
-      <span style="font-size:.85rem;color:#8899cc;">최저 </span>
-      <span style="font-size:.9rem;color:#60a5fa;font-weight:700;">${low:,.2f}</span>
-      <span style="font-size:.82rem;color:#60a5fa;"> ({'+' if low_pct>=0 else ''}{low_pct:.2f}%)</span>
-    </div>
-  </div>
-
-  <!-- 시작일 -->
-  {'<div style="font-size:.88rem;color:#7788aa;margin-bottom:.9rem;font-weight:500;">📅 ' + start_date + ' ~</div>' if start_date else ''}
-
-  <!-- 기본 정보 -->
-  <div style="background:#0d0d1c;border:1px solid #1a1a30;border-radius:11px;padding:.9rem 1rem;margin-bottom:.6rem;">
-    <div style="font-size:.88rem;font-weight:700;color:#aaa;margin-bottom:.7rem;border-bottom:1px solid #1a1a30;padding-bottom:.4rem;">기본 정보</div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem;">
-      <div>
-        <div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">총 시드</div>
-        <div style="font-family:'Space Mono',monospace;font-size:.92rem;font-weight:700;color:#ddd;">${seed:,.2f}</div>
-      </div>
-      <div>
-        <div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">사용 중인 금고</div>
-        <div style="font-family:'Space Mono',monospace;font-size:.92rem;font-weight:700;
-          color:{'#ff7777' if escrow>0 else '#666688'};">${escrow:,.2f}</div>
-      </div>
-      <div>
-        <div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">오늘 예산</div>
-        <div style="font-family:'Space Mono',monospace;font-size:.92rem;font-weight:700;color:#4ade80;">${budget:,.2f}</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 매입 정보 -->
-  <div style="background:#0d0d1c;border:1px solid #1a1a30;border-radius:11px;padding:.9rem 1rem;">
-    <div style="font-size:.88rem;font-weight:700;color:#aaa;margin-bottom:.7rem;border-bottom:1px solid #1a1a30;padding-bottom:.4rem;">매입 정보</div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem;">
-      <div>
-        <div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">평단가</div>
-        <div style="font-family:'Space Mono',monospace;font-size:.92rem;font-weight:700;color:#ddd;">${avg:,.2f}</div>
-      </div>
-      <div>
-        <div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">보유 수량</div>
-        <div style="font-family:'Space Mono',monospace;font-size:.92rem;font-weight:700;color:#ddd;">{qty}주</div>
-      </div>
-      <div>
-        <div style="font-size:.8rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">매입 금액</div>
-        <div style="font-family:'Space Mono',monospace;font-size:.92rem;font-weight:700;color:#fbbf24;">${invest_a:,.2f}</div>
-      </div>
-    </div>
+  <div style="margin-top:.7rem;font-size:.82rem;color:#336688;text-align:center;">
+    🕐 15:30~16:00 EST · 30분 U-Curve 타임 슬라이싱 자동 집행
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-            # ── 무매 공식 + 스나이퍼 + 주문 계획 (웹앱4) ─
-            if avg > 0:
-                p_avg    = round(avg - 0.01, 2)
-                p_star   = round(star_p - 0.01, 2)
-                q_star   = math.floor(budget/p_star) if p_star>0 else 0
-                q_sell   = math.ceil(qty/4) if qty>0 else 0
-                base_n   = math.floor(budget/avg) if avg>0 else 0
+            # ── 일반 전략 공식 표시 (V_VWAP 제외)
+            if avg > 0 and not is_vwap:
+                p_avg  = round(avg - 0.01, 2)
+                p_star = round(star_p - 0.01, 2)
+                q_star = math.floor(budget/p_star) if p_star>0 else 0
+                q_sell = math.ceil(qty/4) if qty>0 else 0
+                phase  = "전반전" if t_val < split/2 else "후반전"
+
+                # ── 종목 카드: 무매공식 ───────────────────
+                card_formula = (
+                    '<div style="background:#111120;border:1px solid #1e1e35;border-radius:14px;'
+                    'padding:1rem 1.3rem;margin-bottom:.2rem;">'
+                    '<div style="background:#0d0d1c;border:1px solid #1a1a30;border-radius:11px;padding:.9rem 1rem;">'
+                    '<div style="font-size:.88rem;font-weight:700;color:#aaa;margin-bottom:.7rem;'
+                    'border-bottom:1px solid #1a1a30;padding-bottom:.4rem;">📐 무매 공식</div>'
+                    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;text-align:center;">'
+                    '<div>'
+                    '<div style="font-size:.82rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">T</div>'
+                    f'<div style="font-family:\'Space Mono\',monospace;font-size:.95rem;font-weight:700;color:#ddd;">{t_val:.4f}</div>'
+                    '</div>'
+                    '<div>'
+                    '<div style="font-size:.82rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">목표 수익률</div>'
+                    f'<div style="font-family:\'Space Mono\',monospace;font-size:.95rem;font-weight:700;color:#4ade80;">{target:.1f}%</div>'
+                    '</div>'
+                    '<div>'
+                    '<div style="font-size:.82rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">별%가격</div>'
+                    f'<div style="font-family:\'Space Mono\',monospace;font-size:.95rem;font-weight:700;color:#fbbf24;">${star_p:,.2f}</div>'
+                    '</div>'
+                    '</div></div></div>'
+                )
+                st.markdown(card_formula, unsafe_allow_html=True)
+
+                # ── 종목 카드: 스나이퍼 방어선 ──────────
+                if qty > 0:
+                    card_sniper = (
+                        '<div style="background:#180a0a;border:1px solid #3a1818;border-radius:14px;'
+                        'padding:1rem 1.3rem;margin-bottom:.2rem;">'
+                        '<div style="font-size:.88rem;color:#cc9999;font-weight:600;margin-bottom:.45rem;">'
+                        f'🎯 스나이퍼 동적 방어선 '
+                        f'<span style="font-size:.82rem;color:#998888;font-weight:400;">(−{sniper_m*10:.2f}% 하락 시)</span>'
+                        '</div>'
+                        f'<div style="font-family:\'Space Mono\',monospace;font-size:1.0rem;font-weight:700;'
+                        f'color:#ff7777;margin-bottom:.4rem;">${sniper_l:,.2f} 이하 지정가 장전 대기 중</div>'
+                        f'<div style="font-size:.9rem;color:#e0c050;font-weight:600;">'
+                        f'🦅 쿼터 스나이퍼: ${star_p:,.2f} 이상 대기</div>'
+                        '</div>'
+                    )
+                    st.markdown(card_sniper, unsafe_allow_html=True)
+
+                # ── 종목 카드: 주문 계획 ─────────────────
+                if not is_rev and qty > 0:
+                    card_order = (
+                        '<div style="background:#111120;border:1px solid #1e1e35;border-radius:14px;'
+                        'padding:1rem 1.3rem;margin-bottom:.2rem;">'
+                        '<div style="display:flex;justify-content:space-between;align-items:center;'
+                        'margin-bottom:.8rem;border-bottom:1px solid #1a1a30;padding-bottom:.5rem;">'
+                        '<div style="font-size:.88rem;font-weight:700;color:#aaa;">📋 주문 계획</div>'
+                        '<div style="display:flex;gap:.4rem;align-items:center;">'
+                        f'<span style="background:#182818;border:1px solid rgba(51,170,85,.25);border-radius:6px;'
+                        f'padding:.12rem .5rem;font-size:.8rem;font-weight:700;color:#33cc66;">Ver {version}</span>'
+                        f'<span style="font-size:.82rem;color:#8899aa;font-weight:500;">[{phase}]</span>'
+                        '</div></div>'
+                        '<div style="display:flex;align-items:flex-start;gap:.6rem;margin-bottom:.55rem;">'
+                        '<span style="color:#ff6666;font-size:.95rem;">🔴</span>'
+                        '<div>'
+                        '<div style="font-size:.9rem;font-weight:700;color:#ddd;">⚓ 평단매수</div>'
+                        f'<div style="font-size:.85rem;color:#99aacc;margin-top:.1rem;">└ ${p_avg:,.2f} × {N}주 (LOC)</div>'
+                        '</div></div>'
+                        '<div style="display:flex;align-items:flex-start;gap:.6rem;margin-bottom:.55rem;">'
+                        '<span style="color:#ff6666;font-size:.95rem;">🔴</span>'
+                        '<div>'
+                        '<div style="font-size:.9rem;font-weight:700;color:#ddd;">💫 별값매수</div>'
+                        f'<div style="font-size:.85rem;color:#99aacc;margin-top:.1rem;">└ ${p_star:,.2f} × {q_star}주 (LOC)</div>'
+                        '</div></div>'
+                        '<div style="display:flex;align-items:flex-start;gap:.6rem;">'
+                        '<span style="color:#60a5fa;font-size:.95rem;">🔵</span>'
+                        '<div>'
+                        '<div style="font-size:.9rem;font-weight:700;color:#ddd;">⭐ 별값매도</div>'
+                        f'<div style="font-size:.85rem;color:#99aacc;margin-top:.1rem;">└ ${star_p:,.2f} × {q_sell}주 (LOC)</div>'
+                        '</div></div>'
+                        '</div>'
+                    )
+                    st.markdown(card_order, unsafe_allow_html=True)
+
+            # ── 줍줍 주문 표시 (V_VWAP 제외)
+            if avg > 0 and not is_vwap:
+                base_n = math.floor(budget/avg) if avg>0 else 0
                 jup_orders = []
                 for i in range(1, 6):
                     jp = math.floor(budget/(base_n+i)*100)/100.0 if (base_n+i)>0 else 0
                     jp = min(jp, avg-0.01)
                     if jp > 0.01:
                         jup_orders.append(jp)
-                jup_min  = min(jup_orders) if jup_orders else 0
-                jup_max  = max(jup_orders) if jup_orders else 0
-                phase    = "전반전" if t_val < split/2 else "후반전"
+                jup_min = min(jup_orders) if jup_orders else 0
+                jup_max = max(jup_orders) if jup_orders else 0
 
-                st.markdown(f"""
-<div style="background:#111120;border:1px solid #1e1e35;border-radius:16px;
-  padding:1.1rem 1.3rem;margin-bottom:.4rem;">
-
-  <!-- 무매 공식 -->
-  <div style="background:#0d0d1c;border:1px solid #1a1a30;border-radius:11px;
-    padding:.9rem 1rem;margin-bottom:.9rem;">
-    <div style="font-size:.88rem;font-weight:700;color:#aaa;
-      margin-bottom:.7rem;border-bottom:1px solid #1a1a30;padding-bottom:.4rem;">📐 무매 공식</div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;text-align:center;">
-      <div>
-        <div style="font-size:.82rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">T</div>
-        <div style="font-family:'Space Mono',monospace;font-size:.95rem;font-weight:700;color:#ddd;">{t_val:.4f}</div>
-      </div>
-      <div>
-        <div style="font-size:.82rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">목표 수익률</div>
-        <div style="font-family:'Space Mono',monospace;font-size:.95rem;font-weight:700;color:#4ade80;">{target:.1f}%</div>
-      </div>
-      <div>
-        <div style="font-size:.82rem;color:#8899aa;margin-bottom:.2rem;font-weight:500;">별%가격</div>
-        <div style="font-family:'Space Mono',monospace;font-size:.95rem;font-weight:700;color:#fbbf24;">${star_p:,.2f}</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 스나이퍼 방어선 -->
-  {f'''<div style="background:#180a0a;border:1px solid #3a1818;border-radius:11px;
-    padding:.9rem 1rem;margin-bottom:.9rem;">
-    <div style="font-size:.88rem;color:#cc9999;font-weight:600;margin-bottom:.45rem;">
-      🎯 스나이퍼 동적 방어선
-      <span style="font-size:.82rem;color:#998888;font-weight:400;"> (−{sniper_m*10:.2f}% 하락 시)</span>
-    </div>
-    <div style="font-family:'Space Mono',monospace;font-size:1.0rem;font-weight:700;
-      color:#ff7777;margin-bottom:.55rem;">${sniper_l:,.2f} 이하 지정가 장전 대기 중</div>
-    <div style="font-size:.9rem;color:#e0c050;font-weight:600;">
-      🦅 쿼터 스나이퍼: ${star_p:,.2f} 이상 대기</div>
-  </div>''' if qty>0 else ''}
-
-  <!-- 주문 계획 -->
-  {f'''<div style="background:#0d0d1c;border:1px solid #1a1a30;border-radius:11px;padding:.9rem 1rem;">
-    <div style="display:flex;justify-content:space-between;align-items:center;
-      margin-bottom:.8rem;border-bottom:1px solid #1a1a30;padding-bottom:.5rem;">
-      <div style="font-size:.88rem;font-weight:700;color:#aaa;">📋 주문 계획</div>
-      <div style="display:flex;gap:.4rem;align-items:center;">
-        <span style="background:#182818;border:1px solid #33aa5540;border-radius:6px;
-          padding:.12rem .5rem;font-size:.8rem;font-weight:700;color:#33cc66;">Ver {version}</span>
-        <span style="font-size:.82rem;color:#8899aa;font-weight:500;">[{phase}]</span>
-      </div>
-    </div>
-    <div style="display:flex;align-items:flex-start;gap:.6rem;margin-bottom:.55rem;">
-      <span style="color:#ff6666;font-size:.95rem;line-height:1.5;">🔴</span>
-      <div>
-        <div style="font-size:.9rem;font-weight:700;color:#ddd;">⚓ 평단매수</div>
-        <div style="font-size:.85rem;color:#99aacc;margin-top:.1rem;">└ ${p_avg:,.2f} × {N}주 (LOC)</div>
-      </div>
-    </div>
-    <div style="display:flex;align-items:flex-start;gap:.6rem;margin-bottom:.55rem;">
-      <span style="color:#ff6666;font-size:.95rem;line-height:1.5;">🔴</span>
-      <div>
-        <div style="font-size:.9rem;font-weight:700;color:#ddd;">💫 별값매수</div>
-        <div style="font-size:.85rem;color:#99aacc;margin-top:.1rem;">└ ${p_star:,.2f} × {q_star}주 (LOC)</div>
-      </div>
-    </div>
-    <div style="display:flex;align-items:flex-start;gap:.6rem;">
-      <span style="color:#60a5fa;font-size:.95rem;line-height:1.5;">🔵</span>
-      <div>
-        <div style="font-size:.9rem;font-weight:700;color:#ddd;">⭐ 별값매도</div>
-        <div style="font-size:.85rem;color:#99aacc;margin-top:.1rem;">└ ${star_p:,.2f} × {q_sell}주 (LOC)</div>
-      </div>
-    </div>
-  </div>''' if not is_rev and qty>0 else ''}
-
-</div>
-""", unsafe_allow_html=True)
-
-            # ── 줍줍 + 장마감 + 거래 내역 (웹앱5) ──────
-            recs = sorted([r for r in ledger if r.get('ticker')==ticker],
-                          key=lambda x: x.get('id',0), reverse=True)
-
-            if avg > 0 and jup_orders and qty > 0:
-                st.markdown(f"""
+                if jup_orders and qty > 0:
+                    st.markdown(f"""
 <div style="background:#111120;border:1px solid #1e1e35;border-radius:14px;
   padding:1rem 1.3rem;margin-bottom:.4rem;">
   <div style="display:flex;align-items:flex-start;gap:.6rem;">
@@ -708,23 +858,8 @@ def show_dashboard():
 </div>
 """, unsafe_allow_html=True)
 
-            # 장마감 상태 자동 감지
-            try:
-                import pandas_market_calendars as mcal
-                est = pytz.timezone('US/Eastern')
-                nyse = mcal.get_calendar('NYSE')
-                today_est = datetime.datetime.now(est).date()
-                sched = nyse.schedule(start_date=today_est, end_date=today_est)
-                if not sched.empty:
-                    mopen  = sched.iloc[0]['market_open'].astimezone(est)
-                    mclose = sched.iloc[0]['market_close'].astimezone(est)
-                    is_trading = mopen <= datetime.datetime.now(est) < mclose
-                else:
-                    is_trading = False
-            except:
-                is_trading = False
-
-            if not is_trading:
+            # ── 장마감 상태 표시
+            if market_status not in ("OPEN", "PREMARKET"):
                 st.markdown("""
 <div style="background:#1c0a0a;border:1px solid #3a1a1a;border-radius:11px;
   padding:.7rem 1.1rem;margin-bottom:.4rem;
@@ -734,11 +869,13 @@ def show_dashboard():
 </div>
 """, unsafe_allow_html=True)
 
-            # 거래 내역 테이블
+            # ── 거래 내역 테이블
+            recs = sorted([r for r in ledger if r.get('ticker')==ticker],
+                          key=lambda x: x.get('id',0), reverse=True)
+
             if recs:
                 buy_t  = sum(r['price']*r['qty'] for r in recs if r.get('side')=='BUY')
                 sell_t = sum(r['price']*r['qty'] for r in recs if r.get('side')=='SELL')
-
                 rows_html = ""
                 for r in recs[:20]:
                     side     = r.get('side','')
@@ -782,7 +919,6 @@ def show_dashboard():
 </div>
 """, unsafe_allow_html=True)
 
-            # 최신 데이터 불러오기 버튼
             if st.button(f"🔄  최신 데이터 수동 불러오기", key=f"refresh_{ticker}", use_container_width=True):
                 st.cache_data.clear()
                 st.rerun()
@@ -791,22 +927,247 @@ def show_dashboard():
 
 
     # ════════════════════════════════════════════════════
-    # 탭2: 조종실
+    # 탭2: VWAP 엔진
     # ════════════════════════════════════════════════════
     with tab2:
+        st.markdown('<div style="font-size:1.05rem;font-weight:700;color:#ddd;margin:.6rem 0 1.1rem;">🌊 VWAP 자율주행 엔진 대시보드</div>', unsafe_allow_html=True)
+
+        # ── VWAP 윈도우 상태 카드 ──────────────────────────
+        vw = vwap_win
+        if vw["active"]:
+            pct = vw["pct"]
+            bar_filled = round(pct / 100 * 20)
+            bar = "█" * bar_filled + "░" * (20 - bar_filled)
+            window_html = f"""
+<div style="background:#00112a;border:1px solid #0055aa;border-radius:16px;
+  padding:1.3rem 1.3rem 1rem;margin-bottom:1rem;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.9rem;">
+    <div>
+      <div style="font-size:.82rem;color:#4499cc;font-weight:600;margin-bottom:.2rem;">🔴 LIVE · VWAP 실행 중</div>
+      <div style="font-size:1.3rem;font-weight:900;color:#44ccff;">Bin {vw['bin_idx']+1} / 30</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:.82rem;color:#4499cc;margin-bottom:.2rem;">잔여 슬롯</div>
+      <div style="font-family:'Space Mono',monospace;font-size:1.6rem;font-weight:700;color:#fff;">{vw['remaining']}분</div>
+    </div>
+  </div>
+  <div style="font-family:'Space Mono',monospace;font-size:.82rem;color:#3377aa;margin-bottom:.5rem;">{bar} {pct}%</div>
+  <div style="font-size:.85rem;color:#336688;">15:30 EST 진입 → 16:00 EST 완전 소진 (U-Curve 가중치 자동 분배)</div>
+</div>"""
+        else:
+            est = pytz.timezone('US/Eastern')
+            now_est = datetime.datetime.now(est)
+            if now_est.hour < 15 or (now_est.hour == 15 and now_est.minute < 30):
+                remaining_mins = (15*60+30) - (now_est.hour*60+now_est.minute)
+                status_txt = f"⏳ VWAP 윈도우 대기 중 (약 {remaining_mins}분 후 진입)"
+                status_col = "#ccaa44"
+                status_bg = "#1a1500"
+                status_border = "#443a00"
+            else:
+                status_txt = "✅ 당일 VWAP 집행 완료 (16:00 EST 소진)"
+                status_col = "#44cc88"
+                status_bg = "#0a1a10"
+                status_border = "#114422"
+
+            window_html = f"""
+<div style="background:{status_bg};border:1px solid {status_border};border-radius:16px;
+  padding:1.3rem 1.3rem;margin-bottom:1rem;text-align:center;">
+  <div style="font-size:1.1rem;font-weight:700;color:{status_col};">{status_txt}</div>
+  <div style="font-size:.85rem;color:#446655;margin-top:.4rem;">VWAP 윈도우: 15:30~16:00 EST (장 마감 30분)</div>
+</div>"""
+
+        st.markdown(window_html, unsafe_allow_html=True)
+
+        # ── U-Curve 프로파일 시각화 ───────────────────────
+        st.markdown("""
+<div style="background:#111120;border:1px solid #1e1e35;border-radius:14px;
+  padding:1.1rem 1.3rem;margin-bottom:1rem;">
+  <div style="font-size:.9rem;font-weight:700;color:#aaa;margin-bottom:.9rem;">
+    📈 U-Curve 가중치 프로파일 (30분 타임 슬라이싱)
+  </div>
+  <div style="display:flex;align-items:flex-end;gap:2px;height:60px;">
+""", unsafe_allow_html=True)
+
+        # 종목별 VWAP 프로파일 바 시각화
+        soxl_profile = [
+            0.0308,0.0220,0.0190,0.0228,0.0179,0.0191,0.0199,0.0190,0.0187,0.0213,
+            0.0216,0.0234,0.0222,0.0212,0.0211,0.0231,0.0234,0.0226,0.0215,0.0223,
+            0.0518,0.0361,0.0369,0.0400,0.0655,0.0661,0.0365,0.0394,0.0503,0.1447
+        ]
+        max_w = max(soxl_profile)
+        cur_bin = vwap_win["bin_idx"] if vwap_win["active"] else -1
+        bars_html = '<div style="display:flex;align-items:flex-end;gap:2px;height:64px;padding:0 .2rem;">'
+        for i, w in enumerate(soxl_profile):
+            h = max(4, round(w / max_w * 60))
+            if i < cur_bin:
+                col = "#224422"
+                border = "#114411"
+            elif i == cur_bin:
+                col = "#00ccff"
+                border = "#0088bb"
+            else:
+                col = "#1a3a6a"
+                border = "#0a2a5a"
+            bars_html += f'<div style="flex:1;height:{h}px;background:{col};border-top:2px solid {border};border-radius:2px 2px 0 0;min-width:4px;" title="Bin {i+1}: {w:.4f}"></div>'
+        bars_html += "</div>"
+        bars_html += '<div style="display:flex;justify-content:space-between;font-size:.72rem;color:#445566;margin-top:.3rem;padding:0 .2rem;">'
+        bars_html += '<span>15:30</span><span>15:45</span><span>15:50</span><span>15:55</span><span>16:00</span></div>'
+
+        vwap_bin_status = (
+            f'<span style="font-size:.8rem;color:#44ccff;font-weight:600;"> — Bin {cur_bin+1} 실행 중</span>'
+            if vwap_win["active"] else ""
+        )
+        st.markdown(f"""
+<div style="background:#111120;border:1px solid #1e1e35;border-radius:14px;
+  padding:1.1rem 1.3rem;margin-bottom:1rem;">
+  <div style="font-size:.9rem;font-weight:700;color:#aaa;margin-bottom:.7rem;">
+    📊 SOXL U-Curve 가중치 · 30구간
+    {vwap_bin_status}
+  </div>
+  {bars_html}
+  <div style="font-size:.8rem;color:#334455;margin-top:.5rem;">마지막 5개 구간에 유동성 집중 (U-Curve 후미 폭발 패턴)</div>
+</div>
+""", unsafe_allow_html=True)
+
+        # ── 변동성 엔진 카드 ──────────────────────────────
+        st.markdown('<div style="font-size:.95rem;font-weight:700;color:#ccc;margin:.8rem 0 .6rem;">⚡ 변동성 엔진 (동적 스나이퍼 타격선)</div>', unsafe_allow_html=True)
+
+        with st.spinner("변동성 데이터 불러오는 중..."):
+            vol_data = get_volatility_data()
+
+        for ticker in tickers:
+            vd = vol_data.get(ticker, {})
+            if not vd:
+                st.markdown(f"""
+<div style="background:#111120;border:1px solid #1e1e35;border-radius:12px;
+  padding:.9rem 1.1rem;margin-bottom:.6rem;color:#556677;font-size:.9rem;">
+  {ticker} — 변동성 데이터 로드 실패 (캐시값 사용 중)
+</div>""", unsafe_allow_html=True)
+                continue
+
+            weight = vd["weight"]
+            metric = vd["metric"]
+            metric_mean = vd["metric_mean"]
+            direction = vd["direction"]
+            label = vd["label"]
+
+            # 마스터 스위치 방향
+            if direction == "BUY":
+                dir_txt = "🔫 하방 매수 모드 [ON]"
+                dir_col = "#44ee88"
+                dir_bg  = "#0a2a1a"
+                dir_border = "#115522"
+            else:
+                dir_txt = "🛡️ 상방 익절 우선 [ON]"
+                dir_col = "#ff8844"
+                dir_bg  = "#2a1500"
+                dir_border = "#552200"
+
+            # 1년 ATR 기반 타격선 (근사값)
+            atr_defaults = {"TQQQ": 1.65*3, "SOXL": 2.93*3}
+            drop_pct = atr_defaults.get(ticker, 5.0)
+
+            w_bar = min(100, round(weight * 50))
+            w_color = "#ff6644" if weight > 1.3 else ("#ffaa44" if weight > 1.0 else "#44cc88")
+            w_status = "⚠️ 과열" if weight > 1.3 else ("↑ 주의" if weight > 1.0 else "✅ 정상")
+
+            st.markdown(f"""
+<div style="background:#111120;border:1px solid #1e1e35;border-radius:14px;
+  padding:1.1rem 1.3rem;margin-bottom:.8rem;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.8rem;">
+    <span style="font-size:1.1rem;font-weight:900;color:#fff;">{ticker}</span>
+    <div style="background:{dir_bg};border:1px solid {dir_border};border-radius:8px;
+      padding:.2rem .7rem;font-size:.82rem;font-weight:700;color:{dir_col};">{dir_txt}</div>
+  </div>
+
+  <div style="font-size:.82rem;color:#5577aa;margin-bottom:.5rem;font-weight:500;">{label}</div>
+
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin-bottom:.8rem;">
+    <div style="background:#0d0d1c;border:1px solid #1a1a30;border-radius:9px;padding:.6rem .8rem;text-align:center;">
+      <div style="font-size:.78rem;color:#7788aa;margin-bottom:.2rem;">현재값</div>
+      <div style="font-family:'Space Mono',monospace;font-size:.95rem;font-weight:700;color:{w_color};">{metric:.1f}</div>
+    </div>
+    <div style="background:#0d0d1c;border:1px solid #1a1a30;border-radius:9px;padding:.6rem .8rem;text-align:center;">
+      <div style="font-size:.78rem;color:#7788aa;margin-bottom:.2rem;">1년 평균</div>
+      <div style="font-family:'Space Mono',monospace;font-size:.95rem;font-weight:700;color:#aabbcc;">{metric_mean:.1f}</div>
+    </div>
+    <div style="background:#0d0d1c;border:1px solid #1a1a30;border-radius:9px;padding:.6rem .8rem;text-align:center;">
+      <div style="font-size:.78rem;color:#7788aa;margin-bottom:.2rem;">공포 가중치</div>
+      <div style="font-family:'Space Mono',monospace;font-size:.95rem;font-weight:700;color:{w_color};">{weight:.2f}x</div>
+    </div>
+  </div>
+
+  <!-- 가중치 바 -->
+  <div style="margin-bottom:.8rem;">
+    <div style="display:flex;justify-content:space-between;font-size:.78rem;color:#556677;margin-bottom:.3rem;">
+      <span>공포 수위</span><span style="color:{w_color};">{w_status}</span>
+    </div>
+    <div style="height:7px;background:#1a1a2a;border-radius:4px;overflow:hidden;">
+      <div style="height:100%;width:{w_bar}%;background:linear-gradient(90deg,#334466,{w_color});border-radius:4px;transition:width .3s;"></div>
+    </div>
+  </div>
+
+  <!-- 1년 ATR 타격선 -->
+  <div style="background:#1a0a0a;border:1px solid #3a1818;border-radius:9px;padding:.7rem .9rem;">
+    <div style="font-size:.82rem;color:#cc8888;font-weight:600;margin-bottom:.3rem;">🎯 동적 타격선 (1년 ATR × 3배)</div>
+    <div style="font-family:'Space Mono',monospace;font-size:1.05rem;font-weight:700;color:#ff7777;">
+      −{drop_pct:.2f}% 이하 하락 시 스나이퍼 발동
+    </div>
+    <div style="font-size:.78rem;color:#664444;margin-top:.3rem;">1배수 기초지수 ATR 기반 · 공포 가중치 방향타만 적용</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+        # ── 멀티코어 아키텍처 상태 ─────────────────────────
+        st.markdown("""
+<div style="background:#111120;border:1px solid #1e1e35;border-radius:14px;
+  padding:1.1rem 1.3rem;margin-bottom:.8rem;">
+  <div style="font-size:.9rem;font-weight:700;color:#aaa;margin-bottom:.9rem;">🏗️ 멀티코어 스케줄러 아키텍처</div>
+  <div style="display:flex;flex-direction:column;gap:.5rem;">
+    <div style="background:#0a1a0a;border:1px solid #1a3a1a;border-radius:9px;padding:.7rem .9rem;">
+      <div style="font-size:.85rem;font-weight:700;color:#44cc77;">⚙️ 시스템 코어 (scheduler_core)</div>
+      <div style="font-size:.8rem;color:#5577aa;margin-top:.3rem;">
+        토큰 갱신(4회/일) · TrueSync 장부 동기화 · 리버스 상태 점검 · 시스템 자정 청소
+      </div>
+    </div>
+    <div style="background:#0a0a1a;border:1px solid #1a1a3a;border-radius:9px;padding:.7rem .9rem;">
+      <div style="font-size:.85rem;font-weight:700;color:#4488ff;">⚔️ 전투 코어 (scheduler_trade)</div>
+      <div style="font-size:.8rem;color:#5577aa;margin-top:.3rem;">
+        정규장 LOC 장전(17:05/18:05 KST) · 스나이퍼 감시(60초 폴링) · VWAP 1호가 분할 타격(60초)
+      </div>
+    </div>
+  </div>
+  <div style="font-size:.78rem;color:#334455;margin-top:.7rem;text-align:center;">단일 책임 원칙(SRP) 준수 · 공수 완벽 분리</div>
+</div>
+""", unsafe_allow_html=True)
+
+
+    # ════════════════════════════════════════════════════
+    # 탭3: 조종실
+    # ════════════════════════════════════════════════════
+    with tab3:
         st.markdown('<div style="font-size:1.05rem;font-weight:700;color:#ddd;margin:.6rem 0 1.1rem;">⚙️ 현재 설정값</div>', unsafe_allow_html=True)
 
         for ticker in tickers:
             rv = get_reverse(ticker)
+            ver = get_version(ticker)
+            is_vwap_ver = (ver == "V_VWAP")
+
             rows_data = [
-                ("버전",       get_version(ticker),               "#44cc77"),
-                ("시드",       f"${get_seed(ticker):,.0f}",       "#ddd"),
-                ("분할수",     f"{int(get_split(ticker))}회",      "#ddd"),
-                ("목표수익률", f"{get_target(ticker):.1f}%",       "#4ade80"),
-                ("스나이퍼x",  f"x{get_sniper(ticker)}",           "#fbbf24"),
+                ("버전",       ver,                                          "#00ccff" if is_vwap_ver else "#44cc77"),
+                ("시드",       f"${get_seed(ticker):,.0f}",                  "#ddd"),
+                ("분할수",     f"{int(get_split(ticker))}회",                 "#ddd"),
+                ("목표수익률", f"{get_target(ticker):.1f}%",                  "#4ade80"),
+                ("스나이퍼x",  f"x{get_sniper(ticker)}",                      "#fbbf24"),
                 ("리버스",     "🔄 ON" if rv.get("is_active") else "✅ OFF",
                                "#ff6666" if rv.get("is_active") else "#44cc77"),
             ]
+            if rv.get("is_active"):
+                rows_data += [
+                    ("리버스 D+", f"D+{rv.get('day_count', 0)}",              "#ffaa66"),
+                    ("탈출 목표", f"{rv.get('exit_target', 0.0):.1f}%",        "#ffcc44"),
+                ]
+
             rows_html = ""
             for i,(label,val,col) in enumerate(rows_data):
                 bg = "#0d0d1c" if i%2==0 else "#111120"
@@ -817,11 +1178,17 @@ def show_dashboard():
   <span style="font-family:'Space Mono',monospace;font-size:.92rem;font-weight:700;color:{col};">{val}</span>
 </div>"""
 
+            vwap_badge = ""
+            if is_vwap_ver:
+                vwap_badge = '<span style="background:#001a3a;border:1px solid #0055aa;border-radius:6px;padding:.1rem .5rem;font-size:.75rem;font-weight:700;color:#44aaff;margin-left:.4rem;">🌊 VWAP 자율주행</span>'
+
             st.markdown(f"""
 <div style="background:#111120;border:1px solid #1e1e35;border-radius:14px;
   overflow:hidden;margin-bottom:1.1rem;">
-  <div style="padding:.7rem 1.1rem;background:#0a0a18;border-bottom:1px solid #1a1a30;">
+  <div style="padding:.7rem 1.1rem;background:#0a0a18;border-bottom:1px solid #1a1a30;
+    display:flex;align-items:center;">
     <span style="font-size:.95rem;font-weight:700;color:#ccc;">{ticker}</span>
+    {vwap_badge}
   </div>
   {rows_html}
 </div>
@@ -831,9 +1198,9 @@ def show_dashboard():
 
 
     # ════════════════════════════════════════════════════
-    # 탭3: 역사관
+    # 탭4: 역사관
     # ════════════════════════════════════════════════════
-    with tab3:
+    with tab4:
         st.markdown('<div style="font-size:1.05rem;font-weight:700;color:#ddd;margin:.6rem 0 1.1rem;">🏆 졸업 명예의 전당</div>', unsafe_allow_html=True)
 
         if not history:
