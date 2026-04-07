@@ -1,390 +1,596 @@
-# ==========================================================
-# [strategy.py]
-# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
-# ==========================================================
-import math
-import os
-import json
-import tempfile
-import pandas as pd
-from datetime import datetime, timedelta
+"""
+strategy.py v1.3 — 종가베팅 전략 스캔 및 매매 신호 생성
 
-class InfiniteStrategy:
-    def __init__(self, config):
-        self.cfg = config
+[v1.3 핵심 변경]
+  문제: ka10023(당일 급증) API로는 "1~5일 전 급등, 오늘 눌림" 종목을 못 찾음
+  해결: 후보 소스를 3가지로 다양화
 
-    def _ceil(self, val): return math.ceil(val * 100) / 100.0
-    def _floor(self, val): return math.floor(val * 100) / 100.0
+  [소스 1] ka10016 — 52주 신고가 종목 (최근 강세 종목 직접 포착)
+  [소스 2] ka10023 — 당일 거래량 급증 (조건 대폭 완화)
+  [소스 3] ka10024 — 거래량 갱신 상위 (최근 거래 활발 종목)
 
-    def _mark_quarter_sell_completed(self, ticker):
-        flag_file = f"cache_sniper_sell_{ticker}.json"
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        
-        if os.path.exists(flag_file):
-            try:
-                with open(flag_file, 'r') as f:
-                    data = json.load(f)
-                    if data.get("date") == today_str and data.get("QUARTER_SELL_COMPLETED"):
-                        return
-            except Exception:
-                pass
+  → 3소스 합산 후 일봉 데이터로 "최근 5일 내 5% 이상 급등" 확인
+  → 오늘 -0.5% ~ -10% 눌림 중인 종목 선별
 
-        data = {"date": today_str, "QUARTER_SELL_COMPLETED": True}
+[조건 완화]
+  거래대금: 500억 → 100억 (다날·보원케미칼·한패스 포함)
+  눌림 범위: -5% → -10% (시장 급락일 대응)
+  RSI 상한: 70 → 80
+  신고가 범위: -10% → -20%
+  수급 조건: OFF (눌림 구간엔 기관도 매도)
+  정배열: MA5>MA20 (MA60 제외)
+"""
+
+import logging
+from datetime import datetime
+from typing import Optional
+
+from broker import KiwoomBroker
+from strategy_config import StrategyConfig
+
+logger = logging.getLogger(__name__)
+
+
+class Strategy:
+
+    def __init__(self, broker: KiwoomBroker, strategy_cfg: StrategyConfig):
+        self.broker = broker
+        self.scfg   = strategy_cfg
+
+    # ──────────────────────────────────────────────────────────
+    # 1. 일봉 데이터 (MA + 거래량 + 거래대금 + 고가)
+    # ──────────────────────────────────────────────────────────
+
+    def get_daily_data(self, code: str) -> dict:
+        """ka10081 — 주식일봉차트 (문서 p.201)"""
         try:
-            fd, temp_path = tempfile.mkstemp(dir=".")
-            with os.fdopen(fd, 'w') as f:
-                json.dump(data, f)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp_path, flag_file)
-        except Exception:
-            pass
+            data = self.broker._post(
+                "ka10081",
+                "/api/dostk/chart",
+                {
+                    "stk_cd":       code,
+                    "base_dt":      datetime.now().strftime("%Y%m%d"),
+                    "upd_stkpc_tp": "1",
+                }
+            )
+            candles = data.get("stk_dt_pole_chart_qry", [])
+            if not candles:
+                return {}
 
-    # ==========================================================
-    # 🛡️ [V23.12 패치] VWAP 시장 미시구조 거래량 지배력 코어 엔진
-    # ==========================================================
-    def analyze_vwap_dominance(self, df):
-        """
-        1분봉 데이터프레임을 받아 당일 VWAP 지배력을 연산합니다.
-        df는 'Open', 'Close', 'Volume', 'High', 'Low' 컬럼이 존재해야 합니다.
-        """
-        if df is None or len(df) < 10:
-            return {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
-            
-        try:
-            if 'High' in df.columns and 'Low' in df.columns:
-                typical_price = (df['High'] + df['Low'] + df['Close']) / 3.0
-            else:
-                typical_price = df['Close']
-                
-            vol_x_price = typical_price * df['Volume']
-            total_vol = df['Volume'].sum()
-            
-            if total_vol == 0:
-                return {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
-                
-            vwap_price = vol_x_price.sum() / total_vol
-            
-            # 누적 VWAP 기울기 연산
-            df_temp = pd.DataFrame()
-            df_temp['Volume'] = df['Volume']
-            df_temp['Vol_x_Price'] = vol_x_price
-            df_temp['Cum_Vol'] = df_temp['Volume'].cumsum()
-            df_temp['Cum_Vol_Price'] = df_temp['Vol_x_Price'].cumsum()
-            df_temp['Running_VWAP'] = df_temp['Cum_Vol_Price'] / df_temp['Cum_Vol']
-            
-            idx_10pct = int(len(df_temp) * 0.1)
-            vwap_start = df_temp['Running_VWAP'].iloc[idx_10pct]
-            vwap_end = df_temp['Running_VWAP'].iloc[-1]
-            vwap_slope = vwap_end - vwap_start
-            
-            # 거래량 지배력 (VWAP 위/아래 체결량 비율)
-            vol_above = df[df['Close'] > vwap_price]['Volume'].sum()
-            vol_below = df[df['Close'] <= vwap_price]['Volume'].sum()
-            
-            vol_above_pct = vol_above / total_vol if total_vol > 0 else 0
-            vol_below_pct = vol_below / total_vol if total_vol > 0 else 0
-            
-            daily_open = df['Open'].iloc[0] if 'Open' in df.columns else df['Close'].iloc[0]
-            daily_close = df['Close'].iloc[-1]
-            
-            is_up_day = daily_close > daily_open
-            is_down_day = daily_close < daily_open
-            
-            is_strong_up = is_up_day and (vwap_slope > 0) and (vol_above_pct > 0.5)
-            is_strong_down = is_down_day and (vwap_slope < 0) and (vol_below_pct > 0.5)
-            
+            closes, volumes, trading_values, highs, lows = [], [], [], [], []
+            for c in candles:
+                try:
+                    closes.append(abs(float(c.get("cur_prc",   "0").lstrip("+-") or "0")))
+                    volumes.append(abs(int(  c.get("trde_qty", "0").lstrip("+-") or "0")))
+                    # trde_prica: 백만원 단위 → 원 단위 변환
+                    tv = abs(int(c.get("trde_prica", "0").lstrip("+-") or "0")) * 1_000_000
+                    trading_values.append(tv)
+                    highs.append(abs(float(c.get("high_pric", "0").lstrip("+-") or "0")))
+                    lows.append( abs(float(c.get("low_pric",  "0").lstrip("+-") or "0")))
+                except ValueError:
+                    continue
+
+            if len(closes) < 20:
+                return {}
+
+            cfg = self.scfg.get_scan()
+            s, m, l = cfg["ma_short"], cfg["ma_mid"], cfg["ma_long"]
+            ma5  = sum(closes[:s]) / s
+            ma20 = sum(closes[:m]) / m
+            ma60 = sum(closes[:min(l, len(closes))]) / min(l, len(closes))
+
             return {
-                "vwap_price": round(vwap_price, 2),
-                "is_strong_up": bool(is_strong_up),
-                "is_strong_down": bool(is_strong_down),
-                "vol_above_pct": round(vol_above_pct, 4),
-                "vwap_slope": round(vwap_slope, 4)
+                "ma5":            round(ma5, 2),
+                "ma20":           round(ma20, 2),
+                "ma60":           round(ma60, 2),
+                "closes":         closes,
+                "volumes":        volumes,
+                "trading_values": trading_values,
+                "highs":          highs,
+                "lows":           lows,
             }
         except Exception as e:
-            return {"vwap_price": 0.0, "is_strong_up": False, "is_strong_down": False}
+            logger.error(f"[Strategy] {code} 일봉 조회 실패: {e}")
+            return {}
 
-    def get_plan(self, ticker, current_price, avg_price, qty, prev_close, ma_5day=0.0, market_type="REG", available_cash=0, is_simulation=False, vwap_status=None):
-        core_orders = []
-        bonus_orders = []
-        smart_core_orders = []   
-        smart_bonus_orders = []  
-        process_status = "" 
-        
-        # 외부 VWAP 플래그 전파용 캐시
-        tr_info = {"vwap_status": vwap_status} if vwap_status else {}
-        
-        # 스나이퍼 잠금 상태 실시간 확인
-        lock_s_sell = self.cfg.check_lock(ticker, "SNIPER_SELL")
-        lock_s_buy = self.cfg.check_lock(ticker, "SNIPER_BUY")
+    # 하위 호환
+    def get_moving_averages(self, code: str) -> dict:
+        return self.get_daily_data(code)
 
-        # 🛡️ VWAP 락다운을 위한 스나이퍼 익절 팩트 로컬 캐시 원자적 각인
-        if lock_s_sell and not is_simulation:
-            self._mark_quarter_sell_completed(ticker)
-        
-        # ==========================================================
-        # 🛡️ [V18.13 패치] KIS 자전거래(Wash-Trade) 원천 차단 방어벽 엔진
-        # ==========================================================
-        def apply_wash_trade_shield(c_orders, b_orders, sc_orders, sb_orders):
-            all_o = c_orders + b_orders + sc_orders + sb_orders
-            
-            has_sell_moc = any(o['type'] in ['MOC', 'MOO'] and o['side'] == 'SELL' for o in all_o)
-            
-            s_prices = [o['price'] for o in all_o if o['side'] == 'SELL' and o['price'] > 0]
-            min_s = min(s_prices) if s_prices else 0.0
+    # ──────────────────────────────────────────────────────────
+    # 2. 최근 N일 내 급등 여부 확인 (핵심 필터)
+    # ──────────────────────────────────────────────────────────
 
-            def _clean(lst):
-                res = []
-                for o in lst:
-                    if o['side'] == 'BUY':
-                        if has_sell_moc and o['type'] in ['LOC', 'MOC']: 
-                            continue 
-                        
-                        if min_s > 0 and o['price'] >= min_s:
-                            o['price'] = round(min_s - 0.01, 2)
-                            if "🛡️" not in o['desc']: 
-                                o['desc'] = f"🛡️교정_{o['desc'].replace('🦇', '').replace('🧹', '')}"
-                        
-                        # 🎯 마이너스 호가 방어막 공통 적용
-                        o['price'] = max(0.01, o['price'])
-                            
-                    res.append(o)
-                return res
+    def check_recent_surge(self, daily: dict) -> dict:
+        """
+        최근 N거래일 내에 하루 M% 이상 급등한 날이 있었는지 확인
+        반환: {"has_surge": bool, "max_gain": float, "surge_days_ago": int}
+        """
+        cfg    = self.scfg.get_scan()
+        days   = cfg.get("recent_surge_days", 5)
+        min_pct = cfg.get("recent_surge_min_pct", 5.0)
+        closes = daily.get("closes", [])
 
-            return _clean(c_orders), _clean(b_orders), _clean(sc_orders), _clean(sb_orders)
-        # ==========================================================
+        if len(closes) < days + 2:
+            return {"has_surge": False, "max_gain": 0.0, "surge_days_ago": -1}
 
-        other_locked_cash = self.cfg.get_total_locked_cash(exclude_ticker=ticker)
-        real_available_cash = max(0, available_cash - other_locked_cash)
-        
-        split = self.cfg.get_split_count(ticker)      
-        target_pct_val = self.cfg.get_target_profit(ticker) 
-        target_ratio = target_pct_val / 100.0
-        version = self.cfg.get_version(ticker)
-        
-        rev_state = self.cfg.get_reverse_state(ticker)
-        is_reverse = rev_state.get("is_active", False)
-        rev_day = rev_state.get("day_count", 0)
-        exit_target = rev_state.get("exit_target", 0.0)
+        max_gain     = 0.0
+        surge_day    = -1
 
-        t_val, base_portion = self.cfg.get_absolute_t_val(ticker, qty, avg_price)
-        target_price = self._ceil(avg_price * (1 + target_ratio)) if avg_price > 0 else 0
-        is_jackpot_reached = target_price > 0 and current_price >= target_price
+        # index 0 = 오늘, index 1 = 전일, ...
+        # 최근 N일 각 날의 전일 대비 수익률 계산
+        for i in range(1, days + 1):
+            if i + 1 >= len(closes):
+                break
+            prev  = closes[i + 1]
+            today = closes[i]
+            if prev <= 0:
+                continue
+            gain = (today - prev) / prev * 100
+            if gain > max_gain:
+                max_gain  = gain
+                surge_day = i  # 며칠 전
 
-        if version in ["V14", "V17"]:
-            _, dynamic_budget, rem_cash = self.cfg.calculate_v14_state(ticker)
-            one_portion_amt = dynamic_budget
-            
-            is_money_short_check = False if (is_simulation or market_type == "PRE_CHECK") else (real_available_cash < one_portion_amt)
-            
-            if not is_reverse and (t_val > (split - 1) or (qty > 0 and is_money_short_check)):
-                if is_jackpot_reached:
-                    pass
-                else:
-                    is_reverse = True 
-                    rev_day = 1 
-                    
-                    current_return = (current_price - avg_price) / avg_price * 100.0 if avg_price > 0 else 0.0
-                    default_exit = -15.0 if ticker == "TQQQ" else -20.0
-                    
-                    if current_return >= default_exit:
-                        exit_target = 0.0
-                    else:
-                        exit_target = default_exit
+        has_surge = max_gain >= min_pct
+        return {
+            "has_surge":      has_surge,
+            "max_gain":       round(max_gain, 2),
+            "surge_days_ago": surge_day,
+        }
 
-                    # 💡 [핵심 수술] 멱등성 파괴를 유발하던 상태 강제 저장 로직(self.cfg.set_reverse_state) 전면 소각 완료
-        else:
-            one_portion_amt = base_portion
+    # ──────────────────────────────────────────────────────────
+    # 3. 정배열 확인 (MA5 > MA20)
+    # ──────────────────────────────────────────────────────────
 
-        depreciation_factor = 2.0 / split if split > 0 else 0.1
-        star_ratio = target_ratio - (target_ratio * depreciation_factor * t_val)
-        
-        if is_reverse:
-            # 💡 [핵심 수술] 안전 마진 강제 부과 로직 전면 철거. 오직 5MA만 매도 타겟으로 락온.
-            if ma_5day > 0: 
-                star_price = round(ma_5day, 2)
-            else: 
-                star_price = self._ceil(avg_price)
+    def is_ma_aligned(self, code: str, ma_data: Optional[dict] = None) -> bool:
+        if ma_data is None:
+            ma_data = self.get_daily_data(code)
+        if not ma_data:
+            return False
+        return ma_data["ma5"] > ma_data["ma20"]
 
-            ledger = self.cfg.get_ledger()
-            total_sell_amount = 0.0
-            
-            for r in reversed(ledger):
-                if r.get('ticker') == ticker:
-                    if r.get('is_reverse', False):
-                        if r['side'] == 'SELL':
-                            total_sell_amount += (r['qty'] * r['price'])
-                    else:
-                        break
-            
-            if total_sell_amount > 0:
-                one_portion_amt = total_sell_amount / 4.0
-            else:
-                one_portion_amt = base_portion
-        else:
-            star_price = self._ceil(avg_price * (1 + star_ratio)) if avg_price > 0 else 0
-            
-        is_last_lap = (split - 1) < t_val < split
-        
-        if is_simulation: is_money_short = False
-        else: is_money_short = real_available_cash < one_portion_amt
+    # ──────────────────────────────────────────────────────────
+    # 4. 신고가 근접 확인
+    # ──────────────────────────────────────────────────────────
 
-        base_price = current_price if current_price > 0 else prev_close
-        if base_price <= 0: 
-            return {"orders": [], "core_orders": [], "bonus_orders": [], "smart_core_orders": [], "smart_bonus_orders": [], "t_val": t_val, "one_portion": one_portion_amt, "process_status": "⛔가격오류", "is_reverse": is_reverse, "star_price": star_price, "star_ratio": star_ratio, "real_cash_used": real_available_cash, "tracking_info": tr_info}
+    def is_near_high(self, code: str, ma_data: Optional[dict] = None) -> dict:
+        try:
+            if ma_data is None:
+                ma_data = self.get_daily_data(code)
+            if not ma_data:
+                return {"is_high": False, "high_20d": 0, "pct_from_high": 0}
 
-        if market_type == "PRE_CHECK":
-            process_status = "🌅프리마켓"
-            if qty > 0 and target_price > 0 and current_price >= target_price and not is_reverse:
-                core_orders.append({"side": "SELL", "price": current_price, "qty": qty, "type": "LIMIT", "desc": "🌅프리:목표돌파익절"})
-            orders = core_orders + bonus_orders
-            return {"orders": orders, "core_orders": core_orders, "bonus_orders": bonus_orders, "smart_core_orders": [], "smart_bonus_orders": [], "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status, "is_reverse": is_reverse, "star_price": star_price, "star_ratio": star_ratio, "real_cash_used": real_available_cash, "tracking_info": tr_info}
+            cfg    = self.scfg.get_scan()
+            n      = cfg.get("use_recent_high_days", 20)
+            closes = ma_data.get("closes", [])
+            if len(closes) < n:
+                return {"is_high": False, "high_20d": 0, "pct_from_high": 0}
 
-        if market_type == "REG":
-            if qty == 0:
-                process_status = "✨새출발"
-                buy_price = max(0.01, round(self._ceil(base_price * 1.15) - 0.01, 2))
-                buy_qty = math.floor(one_portion_amt / buy_price) if buy_price > 0 else 0
-                if buy_qty > 0:
-                    core_orders.append({"side": "BUY", "price": buy_price, "qty": buy_qty, "type": "LOC", "desc": "🆕새출발"})
-                orders = core_orders + bonus_orders
-                return {"orders": orders, "core_orders": core_orders, "bonus_orders": bonus_orders, "smart_core_orders": [], "smart_bonus_orders": [], "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status, "is_reverse": False, "star_price": star_price, "star_ratio": star_ratio, "real_cash_used": real_available_cash, "tracking_info": tr_info}
+            high_nd = max(closes[:n])
+            cur     = closes[0]
+            if high_nd == 0:
+                return {"is_high": False, "high_20d": 0, "pct_from_high": 0}
 
-            if is_reverse:
-                sell_divisor = 10 if split <= 20 else 20
-                
-                if qty < 4:
-                    sell_qty = qty 
-                else:
-                    sell_qty = max(4, math.floor(qty / sell_divisor)) 
-
-                is_emergency_cash_needed = (real_available_cash < base_price) and (rev_day > 1)
-
-                if rev_day == 1 or is_emergency_cash_needed:
-                    process_status = "🩸리버스(긴급수혈)" if is_emergency_cash_needed else "🚨리버스(1일차)"
-                    
-                    if sell_qty > 0:
-                        desc_str = "🩸수혈매도" if is_emergency_cash_needed else "🛡️의무매도"
-                        if qty < 4: desc_str = "💥잔량청산(수량부족)"
-                        core_orders.append({"side": "SELL", "price": 0, "qty": sell_qty, "type": "MOC", "desc": desc_str})
-                else:
-                    process_status = f"🔄리버스({rev_day}일차)"
-                    buy_qty = 0
-                    buy_price = 0
-                    if one_portion_amt > 0 and star_price > 0:
-                        buy_price = max(0.01, round(star_price - 0.01, 2))
-                        if buy_price > 0: 
-                            buy_qty = math.floor(one_portion_amt / buy_price)
-                            if buy_qty > 0:
-                                core_orders.append({"side": "BUY", "price": buy_price, "qty": buy_qty, "type": "LOC", "desc": "⚓잔금매수"})
-                    
-                    if not lock_s_sell and sell_qty > 0 and star_price > 0:
-                        core_orders.append({"side": "SELL", "price": star_price, "qty": sell_qty, "type": "LOC", "desc": "🌟별값매도"})
-
-                    if one_portion_amt > 0 and buy_price > 0:
-                        for i in range(1, 6):
-                            target_qty = buy_qty + i 
-                            raw_jup_price = self._floor(one_portion_amt / target_qty)
-                            capped_jup_price = min(raw_jup_price, buy_price - 0.01)
-                            jup_price = max(0.01, round(capped_jup_price, 2))
-                            if jup_price > 0:
-                                bonus_orders.append({"side": "BUY", "price": jup_price, "qty": 1, "type": "LOC", "desc": f"🧹리버스줍줍({i})" })
-                
-                if lock_s_sell: process_status = "🔫리버스(명중)"
-                if lock_s_buy and version == "V17":
-                    core_orders = [o for o in core_orders if o['side'] != 'BUY']
-                    bonus_orders = [o for o in bonus_orders if o['side'] != 'BUY']
-                    process_status = "💥가로채기(명중)"
-
-                core_orders, bonus_orders, smart_core_orders, smart_bonus_orders = apply_wash_trade_shield(core_orders, bonus_orders, smart_core_orders, smart_bonus_orders)        
-                orders = core_orders + bonus_orders
-                return {"orders": orders, "core_orders": core_orders, "bonus_orders": bonus_orders, "smart_core_orders": [], "smart_bonus_orders": [], "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status, "is_reverse": is_reverse, "star_price": star_price, "star_ratio": star_ratio, "real_cash_used": real_available_cash, "tracking_info": tr_info}
-
-            if is_jackpot_reached and (t_val > (split - 1) or is_money_short):
-                process_status = "🎉대박익절(리버스생략)"
-            elif is_last_lap: process_status = "🏁마지막회차"
-            elif is_money_short: process_status = "🛡️방어모드(부족)"
-            elif t_val < (split / 2): process_status = "🌓전반전"
-            else: process_status = "🌕후반전"
-
-            if t_val > (split * 1.1):
-                process_status = "🚨T값폭주(역산경고)"
-
-            can_buy = not is_money_short and not is_last_lap
-            
-            # 💡 [핵심 수술] 가속 매수(Turbo Mode) 원천 삭제 (강제 1.0회분 뻥튀기 로직 영구 소각)
-            is_turbo_active = False 
-            safe_ceiling = min(avg_price, star_price) if star_price > 0 else avg_price
-
-            standard_buy_qty = 0 
-            N = math.floor(one_portion_amt / avg_price) if avg_price > 0 else 0
-            p_avg = max(0.01, round(min(self._ceil(avg_price) - 0.01, safe_ceiling - 0.01), 2))
-            
-            if can_buy:
-                p_star = max(0.01, round(star_price - 0.01, 2))
-
-                if t_val < (split / 2):
-                    half_amt = one_portion_amt * 0.5
-                    q_avg_init = math.floor(half_amt / p_avg) if p_avg > 0 else 0
-                    q_star = math.floor(half_amt / p_star) if p_star > 0 else 0
-                    total_basic = q_avg_init + q_star
-                    if total_basic < N: q_avg = q_avg_init + (N - total_basic)
-                    else: q_avg = q_avg_init
-                    
-                    if q_avg > 0:
-                        core_orders.append({"side": "BUY", "price": p_avg, "qty": q_avg, "type": "LOC", "desc": "⚓평단매수"})
-                        standard_buy_qty += q_avg
-                    if q_star > 0:
-                        core_orders.append({"side": "BUY", "price": p_star, "qty": q_star, "type": "LOC", "desc": "💫별값매수"})
-                        standard_buy_qty += q_star
-                else: 
-                    if p_star > 0:
-                        q_star = math.floor(one_portion_amt / p_star)
-                        if q_star > 0:
-                            core_orders.append({"side": "BUY", "price": p_star, "qty": q_star, "type": "LOC", "desc": "💫별값매수"})
-                            standard_buy_qty += q_star
-
-            if one_portion_amt > 0 and (is_simulation or not is_money_short):
-                base_qty_for_jup = math.floor(one_portion_amt / avg_price) if avg_price > 0 else 0
-                if base_qty_for_jup > 0:
-                    for i in range(1, 6):
-                        jup_price = self._floor(one_portion_amt / (base_qty_for_jup + i))
-                        capped_jup_price = round(min(jup_price, avg_price - 0.01), 2)
-                        if capped_jup_price > 0:
-                            safe_jup_price = max(0.01, capped_jup_price)
-                            bonus_orders.append({"side": "BUY", "price": safe_jup_price, "qty": 1, "type": "LOC", "desc": f"🧹줍줍({i})"})
-
-            if qty > 0:
-                if lock_s_sell:
-                    pass
-                else:
-                    q_qty = math.ceil(qty / 4)
-                    rem_qty = qty - q_qty
-                
-                    if star_price > 0 and q_qty > 0:
-                        core_orders.append({"side": "SELL", "price": star_price, "qty": q_qty, "type": "LOC", "desc": "🌟별값매도"})
-                    if target_price > 0 and rem_qty > 0:
-                        core_orders.append({"side": "SELL", "price": target_price, "qty": rem_qty, "type": "LIMIT", "desc": "🎯목표매도"})
-
-            if lock_s_sell:
-                if version == "V17" and not is_reverse and t_val < (split / 2):
-                    process_status = "🔫전반전(명중/성장중)" 
-                else:
-                    process_status = "🔫스나이퍼(명중)"
-
-            if lock_s_buy and version == "V17":
-                core_orders = [o for o in core_orders if o['side'] != 'BUY']
-                bonus_orders = [o for o in bonus_orders if o['side'] != 'BUY']
-                process_status = "💥가로채기(명중)"
-
-            core_orders, bonus_orders, smart_core_orders, smart_bonus_orders = apply_wash_trade_shield(core_orders, bonus_orders, smart_core_orders, smart_bonus_orders)        
-            orders = core_orders + bonus_orders
-            
+            pct       = (cur - high_nd) / high_nd * 100
+            threshold = cfg.get("near_high_threshold_pct", -20.0)
             return {
-                "orders": orders, "core_orders": core_orders, "bonus_orders": bonus_orders,
-                "smart_core_orders": smart_core_orders, "smart_bonus_orders": smart_bonus_orders,
-                "t_val": t_val, "one_portion": one_portion_amt, "process_status": process_status,
-                "is_reverse": is_reverse, "star_price": star_price, "star_ratio": star_ratio,
-                "real_cash_used": real_available_cash,
-                "tracking_info": tr_info 
+                "is_high":       pct >= threshold,
+                "high_20d":      high_nd,
+                "pct_from_high": round(pct, 2),
             }
+        except Exception as e:
+            logger.error(f"[Strategy] {code} 신고가 확인 실패: {e}")
+            return {"is_high": False, "high_20d": 0, "pct_from_high": 0}
+
+    # ──────────────────────────────────────────────────────────
+    # 5. RSI 계산
+    # ──────────────────────────────────────────────────────────
+
+    def calculate_rsi(self, closes: list, period: int = 14) -> float:
+        if len(closes) < period + 1:
+            return 50.0
+        gains, losses = [], []
+        for i in range(period):
+            diff = closes[i] - closes[i + 1]
+            gains.append(diff if diff > 0 else 0)
+            losses.append(-diff if diff < 0 else 0)
+        avg_gain = sum(gains) / period
+        avg_loss = sum(losses) / period
+        if avg_loss == 0:
+            return 100.0
+        rs = avg_gain / avg_loss
+        return round(100 - 100 / (1 + rs), 1)
+
+    # ──────────────────────────────────────────────────────────
+    # 6. 외국인/기관 수급
+    # ──────────────────────────────────────────────────────────
+
+    def get_institution_foreign_flow(self, code: str) -> dict:
+        try:
+            data = self.broker._post(
+                "ka10009", "/api/dostk/frgnistt", {"stk_cd": code}
+            )
+            def to_int(s):
+                s = (s or "0").strip()
+                if not s or s in ("-", "+"): return 0
+                sign = -1 if s.startswith("-") else 1
+                return sign * int(s.lstrip("+-0") or "0")
+            return {
+                "institution_net": to_int(data.get("orgn_daly_nettrde", "0")),
+                "foreign_net":     to_int(data.get("frgnr_daly_nettrde", "0")),
+                "positive":        True,
+            }
+        except:
+            return {"institution_net": 0, "foreign_net": 0, "positive": True}
+
+    # ──────────────────────────────────────────────────────────
+    # 7-A. 소스1: 52주 신고가 종목 (ka10016)
+    # ──────────────────────────────────────────────────────────
+
+    def _source_52w_high(self) -> list[dict]:
+        """
+        ka10016 — 신고저가요청 (문서 확인 필요: URL /api/dostk/rkinfo)
+        52주 신고가 근접 종목 → 최근 강세 종목의 핵심 소스
+        """
+        try:
+            data = self.broker._post(
+                "ka10016",
+                "/api/dostk/rkinfo",
+                {
+                    "mrkt_tp":  "000",  # 전체
+                    "sort_tp":  "1",    # 신고가
+                    "stex_tp":  "3",    # KRX+NXT
+                }
+            )
+            result = []
+            # 응답 키는 실제 API 문서 확인 후 조정 필요
+            raw = data.get("new_high_low", data.get("stk_hgst_lwst", []))
+            for item in raw[:100]:
+                code  = item.get("stk_cd", "").lstrip("A")
+                name  = item.get("stk_nm", "")
+                price = abs(int(item.get("cur_prc", "0").lstrip("+-") or "0"))
+                if price > 0:
+                    result.append({"code": code, "name": name, "cur_price": price,
+                                   "source": "52W_HIGH"})
+            logger.info(f"[Strategy] 소스1(52주신고가): {len(result)}개")
+            return result
+        except Exception as e:
+            logger.warning(f"[Strategy] 소스1 실패: {e}")
+            return []
+
+    # ──────────────────────────────────────────────────────────
+    # 7-B. 소스2: 당일 거래량 급증 (ka10023, 조건 완화)
+    # ──────────────────────────────────────────────────────────
+
+    def _source_volume_surge(self) -> list[dict]:
+        """ka10023 — 거래량급증 (URL: /api/dostk/rkinfo, 문서 p.77)"""
+        try:
+            data = self.broker._post(
+                "ka10023",
+                "/api/dostk/rkinfo",
+                {
+                    "mrkt_tp":     "000",
+                    "sort_tp":     "1",
+                    "tm_tp":       "2",
+                    "trde_qty_tp": "5",   # 5만주 이상
+                    "tm":          "",
+                    "stk_cnd":     "20",  # ETF+ETN+스팩 제외
+                    "pric_tp":     "0",
+                    "stex_tp":     "3",
+                }
+            )
+            result = []
+            for item in data.get("trde_qty_sdnin", []):
+                code  = item.get("stk_cd", "").lstrip("A")
+                name  = item.get("stk_nm", "")
+                price = abs(int(item.get("cur_prc", "0").lstrip("+-") or "0"))
+                if price > 0:
+                    result.append({"code": code, "name": name, "cur_price": price,
+                                   "source": "VOL_SURGE"})
+            logger.info(f"[Strategy] 소스2(거래량급증): {len(result)}개")
+            return result
+        except Exception as e:
+            logger.warning(f"[Strategy] 소스2 실패: {e}")
+            return []
+
+    # ──────────────────────────────────────────────────────────
+    # 7-C. 소스3: 거래량 갱신 상위 (ka10024)
+    # ──────────────────────────────────────────────────────────
+
+    def _source_volume_renew(self) -> list[dict]:
+        """
+        ka10024 — 거래량갱신요청
+        최근 거래 활발 종목 포착 (1~5일 전 급등 종목도 포함 가능)
+        """
+        try:
+            data = self.broker._post(
+                "ka10024",
+                "/api/dostk/rkinfo",
+                {
+                    "mrkt_tp": "000",
+                    "stex_tp": "3",
+                }
+            )
+            result = []
+            # 응답 키 확인 필요
+            raw = data.get("trde_qty_renew", data.get("stk_vlm_renw", []))
+            for item in raw[:100]:
+                code  = item.get("stk_cd", "").lstrip("A")
+                name  = item.get("stk_nm", "")
+                price = abs(int(item.get("cur_prc", "0").lstrip("+-") or "0"))
+                if price > 0:
+                    result.append({"code": code, "name": name, "cur_price": price,
+                                   "source": "VOL_RENEW"})
+            logger.info(f"[Strategy] 소스3(거래량갱신): {len(result)}개")
+            return result
+        except Exception as e:
+            logger.warning(f"[Strategy] 소스3 실패: {e}")
+            return []
+
+    # ──────────────────────────────────────────────────────────
+    # 8. 후보 종목 심층 분석
+    # ──────────────────────────────────────────────────────────
+
+    def analyze_candidate(self, code: str, basic_info: dict,
+                           daily: Optional[dict] = None) -> Optional[dict]:
+        """
+        최근 급등 확인 + MA + 신고가 + RSI 검증
+        """
+        cfg_scan  = self.scfg.get_scan()
+        cfg_entry = self.scfg.get_entry()
+        cur_price = basic_info.get("cur_price", 0)
+
+        # 주가 범위 필터
+        if cur_price > 0 and not (cfg_scan["min_price"] <= cur_price <= cfg_scan["max_price"]):
+            return None
+
+        daily = daily or self.get_daily_data(code)
+        if not daily:
+            return None
+
+        closes = daily.get("closes", [])
+        if len(closes) < 3:
+            return None
+
+        # ── 최근 급등 확인 (핵심 필터) ──────────────────────
+        surge = self.check_recent_surge(daily)
+        if not surge["has_surge"]:
+            logger.debug(
+                f"[Strategy] {code} 최근 급등 없음 "
+                f"(최대:{surge['max_gain']:.1f}%) — 제외"
+            )
+            return None
+
+        # ── 거래대금 확인 (전일 기준) ────────────────────────
+        trading_values = daily.get("trading_values", [])
+        prev_tv = trading_values[1] if len(trading_values) > 1 else 0
+        if prev_tv < cfg_scan["min_trading_value"]:
+            logger.debug(f"[Strategy] {code} 거래대금 부족 ({prev_tv//100_000_000}억) — 제외")
+            return None
+
+        # ── 정배열 (MA5 > MA20) ──────────────────────────────
+        if cfg_scan["ma_alignment"] and not self.is_ma_aligned(code, daily):
+            logger.debug(f"[Strategy] {code} 정배열 미충족 — 제외")
+            return None
+
+        # ── 신고가 근접 ──────────────────────────────────────
+        high_info = self.is_near_high(code, daily)
+        if cfg_scan["use_52w_high"] and not high_info["is_high"]:
+            logger.debug(
+                f"[Strategy] {code} 신고가 범위 초과 "
+                f"({high_info['pct_from_high']:.1f}%) — 제외"
+            )
+            return None
+
+        # ── RSI ──────────────────────────────────────────────
+        rsi = self.calculate_rsi(closes, cfg_entry["rsi_period"])
+        if not (cfg_entry["rsi_min"] <= rsi <= cfg_entry["rsi_max"]):
+            logger.debug(f"[Strategy] {code} RSI {rsi} 범위 초과 — 제외")
+            return None
+
+        # ── 수급 (옵션) ──────────────────────────────────────
+        flow = {"institution_net": 0, "foreign_net": 0}
+        if cfg_entry.get("use_institution_buy") or cfg_entry.get("use_foreign_buy"):
+            flow = self.get_institution_foreign_flow(code)
+
+        volumes = daily.get("volumes", [])
+        today_volume = volumes[0] if volumes else 0
+
+        return {
+            **basic_info,
+            "trading_value":   prev_tv,
+            "volume":          today_volume,
+            "volume_ratio":    round(today_volume / max(volumes[1], 1), 1) if len(volumes) > 1 else 0,
+            "ma5":             daily["ma5"],
+            "ma20":            daily["ma20"],
+            "ma60":            daily["ma60"],
+            "rsi":             rsi,
+            "high_20d":        high_info["high_20d"],
+            "pct_from_high":   high_info["pct_from_high"],
+            "surge_max_gain":  surge["max_gain"],
+            "surge_days_ago":  surge["surge_days_ago"],
+            "institution_net": flow["institution_net"],
+            "foreign_net":     flow["foreign_net"],
+        }
+
+    # ──────────────────────────────────────────────────────────
+    # 9. 종목 점수화
+    # ──────────────────────────────────────────────────────────
+
+    def score_candidate(self, c: dict) -> float:
+        score = 0.0
+        cfg   = self.scfg.get_scan()
+
+        # 거래대금 (최대 35점)
+        tv_score = min(
+            (c["trading_value"] - cfg["min_trading_value"])
+            / 490_000_000_000 * 35, 35
+        )
+        score += max(tv_score, 0)
+
+        # 최근 급등 강도 (최대 30점) — 5%=0점, 30%+=30점
+        surge_score = min((c.get("surge_max_gain", 0) - 5) / 25 * 30, 30)
+        score += max(surge_score, 0)
+
+        # 수급 (최대 20점)
+        if c.get("institution_net", 0) > 0: score += 10
+        if c.get("foreign_net", 0) > 0:     score += 10
+
+        # 신고가 근접도 (최대 15점) — 0%=15점, -20%=0점
+        pct = c.get("pct_from_high", -20)
+        score += max((pct + 20) / 20 * 15, 0)
+
+        return round(score, 2)
+
+    # ──────────────────────────────────────────────────────────
+    # 10. 전체 스캔 실행 (메인)
+    # ──────────────────────────────────────────────────────────
+
+    def scan_candidates(self) -> list[dict]:
+        """
+        3가지 소스에서 후보 수집 → 최근 급등 + 오늘 눌림 필터 → 점수 정렬
+        """
+        logger.info("[Strategy] 후보 종목 스캔 시작 (v1.3)...")
+        cfg_entry = self.scfg.get_entry()
+
+        # ── 3소스 합산 (중복 제거) ───────────────────────────
+        pool: dict[str, dict] = {}
+        for item in (
+            self._source_volume_surge() +  # 소스2 먼저 (가장 안정적)
+            self._source_52w_high() +       # 소스1
+            self._source_volume_renew()     # 소스3
+        ):
+            code = item["code"]
+            if code and code not in pool:
+                pool[code] = item
+
+        logger.info(f"[Strategy] 후보 풀: {len(pool)}개 (중복 제거 후)")
+
+        # ── 심층 분석 (상위 80개만 — API 부하 제한) ──────────
+        passed: dict[str, dict] = {}
+        for code, item in list(pool.items())[:80]:
+            daily  = self.get_daily_data(code)
+            result = self.analyze_candidate(code, item, daily)
+            if result:
+                result["score"] = self.score_candidate(result)
+                passed[code]    = result
+                logger.info(
+                    f"[Strategy] ✅ {result['name']}({code}) "
+                    f"점수:{result['score']} "
+                    f"소스:{result.get('source','?')} "
+                    f"최근급등:{result['surge_max_gain']:.1f}%(D-{result['surge_days_ago']}) "
+                    f"거래대금:{result['trading_value']//100_000_000}억 "
+                    f"RSI:{result['rsi']}"
+                )
+
+        # ── 점수 정렬 후 최대 종목 수 반환 ───────────────────
+        sorted_list = sorted(passed.values(), key=lambda x: x["score"], reverse=True)
+        result      = sorted_list[:cfg_entry["max_positions"]]
+        logger.info(f"[Strategy] 최종 후보: {len(result)}개 / 통과: {len(passed)}개")
+        return result
+
+    # ──────────────────────────────────────────────────────────
+    # 11. 진입 신호 확인
+    # ──────────────────────────────────────────────────────────
+
+    def check_entry_signal(self, code: str, cur_price: int,
+                           prev_close: int) -> dict:
+        cfg = self.scfg.get_entry()
+        now = datetime.now().strftime("%H:%M")
+
+        if not (cfg["entry_start_time"] <= now <= cfg["entry_end_time"]):
+            return {
+                "signal":       False,
+                "reason":       f"진입 시각 아님 ({now})",
+                "pullback_pct": 0,
+            }
+        if prev_close <= 0:
+            return {"signal": False, "reason": "전일 종가 없음", "pullback_pct": 0}
+
+        pullback_pct = (cur_price - prev_close) / prev_close * 100
+
+        if pullback_pct < cfg["pullback_min_pct"]:
+            return {
+                "signal":       False,
+                "reason":       f"눌림 과다 ({pullback_pct:.1f}%)",
+                "pullback_pct": round(pullback_pct, 2),
+            }
+        if pullback_pct > cfg["pullback_max_pct"]:
+            return {
+                "signal":       False,
+                "reason":       f"눌림 부족/상승 중 ({pullback_pct:.1f}%)",
+                "pullback_pct": round(pullback_pct, 2),
+            }
+        return {
+            "signal":       True,
+            "reason":       f"눌림 정상 ({pullback_pct:.1f}%)",
+            "pullback_pct": round(pullback_pct, 2),
+        }
+
+    # ──────────────────────────────────────────────────────────
+    # 12. 매도 신호 확인 (D+1)
+    # ──────────────────────────────────────────────────────────
+
+    def check_exit_signal(self, code: str, cur_price: int,
+                          buy_price: int, held_qty: int,
+                          day_high: int = 0) -> dict:
+        cfg_risk = self.scfg.get_risk()
+        cfg_sell = self.scfg.get_sell()
+        now      = datetime.now().strftime("%H:%M")
+
+        if buy_price <= 0 or held_qty <= 0:
+            return {"signal": "HOLD", "reason": "포지션 없음", "qty": 0}
+
+        profit_pct = (cur_price - buy_price) / buy_price * 100
+
+        if profit_pct <= cfg_risk["stop_loss_pct"]:
+            return {"signal": "FULL",
+                    "reason": f"손절 ({profit_pct:.1f}%)", "qty": held_qty}
+
+        if (cfg_sell["use_nxt_premarket"] and "08:00" <= now <= "08:50"
+                and profit_pct >= cfg_sell["nxt_gap_target_pct"]):
+            return {"signal": "FULL",
+                    "reason": f"NXT 갭 익절 (+{profit_pct:.1f}%)", "qty": held_qty}
+
+        if (now <= cfg_sell["morning_sell_end"]
+                and profit_pct >= cfg_sell["morning_target_pct"]):
+            qty = max(int(held_qty * cfg_risk["partial_sell_pct"] / 100), 1)
+            return {"signal": "PARTIAL",
+                    "reason": f"오전 1차 익절 (+{profit_pct:.1f}%)", "qty": qty}
+
+        if profit_pct >= cfg_risk["take_profit_pct"]:
+            return {"signal": "FULL",
+                    "reason": f"목표 익절 (+{profit_pct:.1f}%)", "qty": held_qty}
+
+        if cfg_risk["trailing_stop"] and day_high > 0:
+            trail = (cur_price - day_high) / day_high * 100
+            if trail <= -cfg_risk["trailing_gap_pct"]:
+                return {"signal": "FULL",
+                        "reason": f"트레일링 스탑 ({trail:.1f}%)", "qty": held_qty}
+
+        if now >= cfg_sell["afternoon_cut_time"] and profit_pct < 0:
+            qty = max(int(held_qty * cfg_sell["afternoon_cut_ratio"] / 100), 1)
+            if qty < held_qty:
+                return {"signal": "PARTIAL",
+                        "reason": f"오후 손실 축소 ({profit_pct:.1f}%)", "qty": qty}
+
+        if cfg_sell["eod_force_sell"] and now >= cfg_risk["force_sell_time"]:
+            return {"signal": "FULL",
+                    "reason": f"강제 청산 {now}", "qty": held_qty}
+
+        return {"signal": "HOLD",
+                "reason": f"보유 유지 ({profit_pct:.1f}%)", "qty": 0}
+
+    # ──────────────────────────────────────────────────────────
+    # 13. 매수 수량 계산
+    # ──────────────────────────────────────────────────────────
+
+    def calculate_buy_qty(self, code: str, cur_price: int,
+                          available_cash: int) -> int:
+        if cur_price <= 0:
+            return 0
+        cfg           = self.scfg.get_entry()
+        target_amount = int(available_cash * cfg["position_size_pct"] / 100)
+        qty           = target_amount // cur_price
+        logger.info(f"[Strategy] {code} 매수: {target_amount:,}원 / @{cur_price:,}원 = {qty}주")
+        return qty
