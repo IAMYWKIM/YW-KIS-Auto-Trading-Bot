@@ -1,6 +1,9 @@
 # ==========================================================
-# [telegram_bot.py] - Part 1
-# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
+# [telegram_bot.py] - Part 1/2 부 (상반부)
+# ⚠️ 수술 내역: 
+# 1. /reset 시 삼위일체(본장부, 에스크로, 백업장부, 큐장부) 100% 소각 엔진 탑재
+# 2. 0주 도달 시 마이너스 수익이라도 장부를 비우는(강제 손절 리셋) 로직 개방
+# 💡 [V24.15 대수술] vwap_strategy 의존성 100% 적출 및 2대 코어 최적화
 # ==========================================================
 import logging
 import datetime
@@ -9,13 +12,15 @@ import time
 import os
 import math 
 import asyncio
+import json
 import pandas_market_calendars as mcal 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram_view import TelegramView 
 
 class TelegramController:
-    def __init__(self, config, broker, strategy, tx_lock=None):
+    # 💡 [핵심 수술] vwap_strategy 의존성 및 변수 100% 적출 완료
+    def __init__(self, config, broker, strategy, tx_lock=None, queue_ledger=None, strategy_rev=None):
         self.cfg = config
         self.broker = broker
         self.strategy = strategy
@@ -24,6 +29,9 @@ class TelegramController:
         self.admin_id = self.cfg.get_chat_id()
         self.sync_locks = {} 
         self.tx_lock = tx_lock or asyncio.Lock()
+        
+        self.queue_ledger = queue_ledger
+        self.strategy_rev = strategy_rev 
 
     def _is_admin(self, update: Update):
         if self.admin_id is None:
@@ -58,25 +66,6 @@ class TelegramController:
         elif market_close <= now < after_end: return "AFTER", "🌙 애프터마켓"
         else: return "CLOSE", "⛔ 장마감"
 
-    # ==========================================================
-    # 💡 [핵심 수술] P매매 타임 윈도우 (Time-Lock) 검증 엔진
-    # ==========================================================
-    def _is_p_trade_window_open(self):
-        est = pytz.timezone('US/Eastern')
-        now_est = datetime.datetime.now(est)
-        nyse = mcal.get_calendar('NYSE')
-        schedule = nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
-        
-        if not schedule.empty:
-            market_close = schedule.iloc[0]['market_close'].astimezone(est)
-            vwap_start = market_close - datetime.timedelta(minutes=30)
-            after_end = market_close + datetime.timedelta(hours=4)
-            
-            # 정규장 마감 30분 전 ~ 애프터마켓 종료까지는 락다운 (데드존)
-            if vwap_start <= now_est <= after_end:
-                return False
-        return True
-
     def _calculate_budget_allocation(self, cash, tickers):
         sorted_tickers = sorted(tickers, key=lambda x: 0 if x == "SOXL" else (1 if x == "TQQQ" else 2))
         allocated = {}
@@ -100,64 +89,161 @@ class TelegramController:
                     
         return sorted_tickers, allocated
 
+    def setup_handlers(self, application):
+        application.add_handler(CommandHandler("start", self.cmd_start))
+        application.add_handler(CommandHandler("sync", self.cmd_sync))
+        application.add_handler(CommandHandler("record", self.cmd_record))
+        application.add_handler(CommandHandler("history", self.cmd_history))
+        application.add_handler(CommandHandler("mode", self.cmd_mode))
+        application.add_handler(CommandHandler("reset", self.cmd_reset))
+        application.add_handler(CommandHandler("seed", self.cmd_seed))
+        application.add_handler(CommandHandler("ticker", self.cmd_ticker))
+        application.add_handler(CommandHandler("settlement", self.cmd_settlement))
+        application.add_handler(CommandHandler("version", self.cmd_version))
+        
+        application.add_handler(CommandHandler("queue", self.cmd_queue))
+        application.add_handler(CommandHandler("add_q", self.cmd_add_q))
+        application.add_handler(CommandHandler("clear_q", self.cmd_clear_q))
+        
+        application.add_handler(CallbackQueryHandler(self.handle_callback))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+
+    def _update_queue_file(self, ticker, new_q):
+        q_file = "data/queue_ledger.json"
+        os.makedirs("data", exist_ok=True)
+        all_q = {}
+        if os.path.exists(q_file):
+            try:
+                with open(q_file, 'r', encoding='utf-8') as f:
+                    all_q = json.load(f)
+            except: pass
+            
+        all_q[ticker] = new_q
+        
+        with open(q_file, 'w', encoding='utf-8') as f:
+            json.dump(all_q, f, ensure_ascii=False, indent=4)
+            
+        if self.queue_ledger:
+            self.queue_ledger.queues = all_q
+
+    async def _verify_and_update_queue(self, ticker, new_q, context, chat_id):
+        self._update_queue_file(ticker, new_q)
+        
+        try:
+            _, holdings = await asyncio.wait_for(
+                asyncio.to_thread(self.broker.get_account_balance), 
+                timeout=5.0
+            )
+            
+            if holdings:
+                actual_qty = int(holdings.get(ticker, {'qty': 0})['qty'])
+                new_q_total = sum(int(float(item.get('qty', 0))) for item in new_q)
+
+                if actual_qty != new_q_total:
+                    await context.bot.send_message(
+                        chat_id, 
+                        f"⚠️ <b>[무결성 경고]</b> 큐 총합(<b>{new_q_total}주</b>) 🆚 실제 계좌 잔고(<b>{actual_qty}주</b>)\n"
+                        f"▫️ <i>수량이 일치하지 않습니다. 분할 입력 중이시라면 나머지 물량도 마저 입력해 맞춰주세요.</i>", 
+                        parse_mode='HTML'
+                    )
+        except asyncio.TimeoutError:
+            await context.bot.send_message(chat_id, "⚠️ KIS 서버 통신 지연으로 실잔고 검증을 생략했습니다. (저장 완료)", parse_mode='HTML')
+        except Exception as e:
+            logging.error(f"잔고 검증 중 에러 (스킵됨): {e}")
+            
+        return True
+
+    async def cmd_queue(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._is_admin(update): return
+        args = context.args
+        if not args:
+            return await update.message.reply_text("❌ 종목명을 입력하세요. 예: /queue SOXL")
+            
+        ticker = args[0].upper()
+        
+        if not getattr(self, 'queue_ledger', None):
+            from queue_ledger import QueueLedger
+            self.queue_ledger = QueueLedger()
+            
+        q_data = self.queue_ledger.get_queue(ticker)
+            
+        msg, reply_markup = self.view.get_queue_management_menu(ticker, q_data)
+        await update.message.reply_text(text=msg, reply_markup=reply_markup, parse_mode='HTML')
+
+    async def cmd_add_q(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._is_admin(update): return
+        
+        try:
+            args = context.args
+            if len(args) < 4:
+                return await update.message.reply_text("❌ 정확한 양식: <code>/add_q SOXL 2026-04-06 20 52.16</code>", parse_mode='HTML')
+                
+            ticker = args[0].upper()
+            date_str = args[1]
+            try:
+                qty = int(args[2])
+                price = float(args[3])
+            except ValueError:
+                return await update.message.reply_text("❌ 수량은 정수, 평단가는 숫자로 입력하세요.")
+                
+            try:
+                curr_p = await asyncio.wait_for(
+                    asyncio.to_thread(self.broker.get_current_price, ticker), 
+                    timeout=3.0
+                )
+                if curr_p and curr_p > 0:
+                    if price < curr_p * 0.7 or price > curr_p * 1.3:
+                        return await update.message.reply_text(f"🚨 <b>오입력 차단:</b> 입력하신 평단가(<b>${price:.2f}</b>)가 현재가 대비 ±30%를 벗어납니다. 오타를 확인하세요!", parse_mode='HTML')
+            except asyncio.TimeoutError:
+                pass 
+            except Exception:
+                pass
+                
+            q_file = "data/queue_ledger.json"
+            all_q = {}
+            if os.path.exists(q_file):
+                try:
+                    with open(q_file, 'r', encoding='utf-8') as f:
+                        all_q = json.load(f)
+                except: pass
+                    
+            ticker_q = all_q.get(ticker, [])
+            ticker_q.append({
+                "qty": qty,
+                "price": price,
+                "date": f"{date_str} 23:59:59", 
+                "type": "MANUAL_OVERRIDE"
+            })
+            
+            ticker_q.sort(key=lambda x: x.get('date', ''), reverse=True)
+            
+            chat_id = update.effective_chat.id
+            await self._verify_and_update_queue(ticker, ticker_q, context, chat_id)
+            await update.message.reply_text(f"✅ <b>[{ticker}] 수동 지층 삽입 완료!</b>\n▫️ {date_str} | {qty}주 | ${price:.2f}", parse_mode='HTML')
+                
+        except Exception as e:
+            await update.message.reply_text(f"❌ 알 수 없는 에러 발생: {e}")
+
+    async def cmd_clear_q(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._is_admin(update): return
+        args = context.args
+        if not args:
+            return await update.message.reply_text("❌ 종목명을 입력하세요. 예: /clear_q SOXL")
+            
+        ticker = args[0].upper()
+        try:
+            chat_id = update.effective_chat.id
+            await self._verify_and_update_queue(ticker, [], context, chat_id)
+            await update.message.reply_text(f"🗑️ <b>[{ticker}] 장부가 완전히 소각되었습니다.</b>\n새로운 지층을 구축할 준비가 되었습니다.", parse_mode='HTML')
+        except Exception as e:
+            await update.message.reply_text(f"❌ 소각 중 에러 발생: {e}")
+
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
         target_hour, season_icon = self._get_dst_info()
         latest_version = self.cfg.get_latest_version() 
         msg = self.view.get_start_message(target_hour, season_icon, latest_version) 
         await update.message.reply_text(msg, parse_mode='HTML')
-
-    async def cmd_v17(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._is_admin(update): return
-        if os.getenv("SECRET_MODE") != "ON": return 
-
-        args = context.args
-        if not args:
-            await update.message.reply_text("⚠️ 종목명을 함께 입력하세요. 예) /v17 TQQQ")
-            return
-            
-        ticker = args[0].upper()
-        active_tickers = self.cfg.get_active_tickers()
-        
-        if ticker in active_tickers:
-            self.cfg.set_version(ticker, "V17")
-            await update.message.reply_text(f"🦇 쉿! <b>[{ticker}] 나만의 시크릿 V17 모드(스나이퍼 어쌔신)</b>가 은밀하게 활성화되었습니다.", parse_mode='HTML')
-        else:
-            await update.message.reply_text(f"❌ 현재 운용 중인 종목이 아닙니다. (운용 중: {', '.join(active_tickers)})")
-
-    async def cmd_v4(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._is_admin(update): return
-        if os.getenv("SECRET_MODE") != "ON": return 
-
-        for t in self.cfg.get_active_tickers():
-            self.cfg.set_version(t, "V14")
-        await update.message.reply_text("✅ <b>모든 종목이 오리지널 V4(무매4) 모드로 복귀했습니다.</b>", parse_mode='HTML')
-
-    # ==========================================================
-    # 💡 [핵심 수술] P매매 시크릿 진입점 (다크 트리거)
-    # ==========================================================
-    async def cmd_p4006(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._is_admin(update): return
-        
-        if not self._is_p_trade_window_open():
-            msg = self.view.get_p_trade_locked_message()
-            await update.message.reply_text(msg, parse_mode='HTML')
-            return
-
-        active_tickers = self.cfg.get_active_tickers()
-        if not active_tickers:
-            await update.message.reply_text("❌ 운용 중인 종목이 설정되지 않았습니다.")
-            return
-            
-        target_ticker = active_tickers[0] 
-        seed = self.cfg.get_seed(target_ticker)
-        multiplier = seed / 10000.0
-
-        self.user_states[update.effective_chat.id] = f"P_TRADE_{target_ticker}_{multiplier}"
-        
-        msg = self.view.get_p_trade_unlocked_message(target_ticker, seed, multiplier)
-        await update.message.reply_text(msg, parse_mode='HTML')
-
     async def cmd_sync(self, update, context):
         if not self._is_admin(update): return
         await update.message.reply_text("🔄 시장 분석 및 지시서 작성 중...")
@@ -233,15 +319,7 @@ class TelegramController:
                 
                 t_val = plan.get('t_val', 0.0)
                 is_rev = plan.get('is_reverse', False)
-                secret_quarter_target = 0.0
                 
-                if ver == "V17" and actual_qty > 0:
-                    if is_rev:
-                        secret_quarter_target = plan.get('star_price', 0.0)
-                    else:
-                        is_first_half = t_val < (split / 2)
-                        secret_quarter_target = plan.get('star_price', 0.0) if is_first_half else math.ceil(actual_avg * 1.005 * 100) / 100.0
-
                 if dynamic_pct_obj and hasattr(dynamic_pct_obj, 'metric_val'):
                     real_val = float(dynamic_pct_obj.metric_val)
                     real_name = dynamic_pct_obj.metric_name
@@ -249,14 +327,56 @@ class TelegramController:
                     real_val = 0.0
                     real_name = "지표"
                     
-                # 💡 [핵심 수술] '권장' 문구 압축 소각 적용
                 vol_status = "ON" if real_val >= 20.0 else "OFF"
+                
+                v_rev_q_qty = 0
+                v_rev_q_lots = 0
+                v_rev_guidance = ""
+                
+                if ver == "V_REV":
+                    if not getattr(self, 'queue_ledger', None):
+                        from queue_ledger import QueueLedger
+                        self.queue_ledger = QueueLedger()
+                        
+                    q_list = self.queue_ledger.get_queue(t)
+                    v_rev_q_lots = len(q_list)
+                    v_rev_q_qty = sum(item.get('qty', 0) for item in q_list)
+       
+                    one_portion_cash = seed * 0.15
+                    plan['one_portion'] = one_portion_cash
+                    one_portion_qty = math.floor(one_portion_cash / curr) if curr > 0 else 0
+                    
+                    half_portion_cash = one_portion_cash * 0.5
+                    
+                    if q_list:
+                        recent_lots = list(reversed(q_list))[:3]
+                        for idx, lot in enumerate(recent_lots):
+                            if idx == 0:
+                                target_sell_price = round(safe_prev_close * 1.006, 2)
+                            else:
+                                target_sell_price = round(actual_avg * 1.005, 2)
+                                
+                            sell_qty = min(lot['qty'], one_portion_qty) if one_portion_qty > 0 else lot['qty']
+                            v_rev_guidance += f" 🔵 매도{idx+1}(Pop{idx+1}): ${target_sell_price:.2f} 돌파 시 <b>{sell_qty}주</b>\n"
+                        
+                        if len(q_list) > 3:
+                            v_rev_guidance += f"  <i>... (이하 {len(q_list)-3}개 로트 대기 중)</i>\n"
+                    else:
+                        v_rev_guidance += f" 🔵 매도(Pop): 대기 물량 없음 (관망)\n"
+                    
+                    b1_price = round(safe_prev_close * 1.10 if v_rev_q_qty == 0 else safe_prev_close * 0.995, 2)
+                    b2_price = round(safe_prev_close * 1.10 if v_rev_q_qty == 0 else safe_prev_close * 0.975, 2)
+                    
+                    b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
+                    b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
+                    
+                    v_rev_guidance += f" 🔴 매수1(Buy1): ${b1_price:.2f} 진입 시 <b>{b1_qty}주</b>\n"
+                    v_rev_guidance += f" 🔴 매수2(Buy2): ${b2_price:.2f} 진입 시 <b>{b2_qty}주</b>"
 
                 ticker_data_list.append({
                     'ticker': t, 'version': ver, 't_val': t_val, 'split': split, 'curr': curr, 'avg': actual_avg, 'qty': actual_qty,
                     'profit_amt': (curr - actual_avg) * actual_qty if actual_qty > 0 else 0, 
                     'profit_pct': (curr - actual_avg) / actual_avg * 100 if actual_avg > 0 else 0,
-                    # 💡 [핵심 수술] 종목별 독립 상태(get_upward_sniper_mode(t)) 연동
                     'upward_sniper': "ON" if self.cfg.get_upward_sniper_mode(t) else "OFF",
                     'target': self.cfg.get_target_profit(t), 'star_pct': round(plan.get('star_ratio', 0) * 100, 2) if 'star_ratio' in plan else 0.0,
                     'seed': seed, 'one_portion': plan.get('one_portion', 0.0), 'plan': plan,
@@ -268,7 +388,7 @@ class TelegramController:
                     'hybrid_target': hybrid_target_price,
                     'trigger_reason': trigger_reason,
                     'sniper_trigger': abs(float(dynamic_pct)), 
-                    'secret_quarter_target': secret_quarter_target,
+                    'secret_quarter_target': 0.0, 
                     'day_high': day_high,
                     'day_low': day_low,
                     'prev_close': safe_prev_close,
@@ -276,21 +396,19 @@ class TelegramController:
                     'dynamic_obj': dynamic_pct_obj,
                     'is_sniper_active_time': is_sniper_active_time,
                     'vol_weight': round(real_val, 2), 
-                    'vol_status': vol_status  
+                    'vol_status': vol_status,
+                    'v_rev_q_lots': v_rev_q_lots,
+                    'v_rev_q_qty': v_rev_q_qty,
+                    'v_rev_guidance': v_rev_guidance
                 })
                 total_buy_needed += sum(o['price']*o['qty'] for o in plan['orders'] if o['side']=='BUY')
 
         surplus = cash - total_buy_needed
         rp_amount = surplus * 0.95 if surplus > 0 else 0
         
-        p_trade_data = self.cfg.get_p_trade_data() 
-        final_msg, markup = self.view.create_sync_report(status_text, dst_txt, cash, rp_amount, ticker_data_list, status_code in ["PRE", "REG"], p_trade_data=p_trade_data)
+        final_msg, markup = self.view.create_sync_report(status_text, dst_txt, cash, rp_amount, ticker_data_list, status_code in ["PRE", "REG"], p_trade_data={})
         
         await update.message.reply_text(final_msg, reply_markup=markup, parse_mode='HTML')
-# ==========================================================
-# [telegram_bot.py] - Part 2
-# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
-# ==========================================================
 
     async def cmd_record(self, update, context):
         if not self._is_admin(update): return
@@ -349,7 +467,7 @@ class TelegramController:
                     self.cfg.apply_stock_split(ticker, split_ratio)
                     self.cfg.set_last_split_date(ticker, split_date)
                     split_type = "액면분할" if split_ratio > 1.0 else "액면병합(역분할)"
-                    await context.bot.send_message(chat_id, f"✂️ <b>[{ticker}] 야후 파이낸스 {split_type} 자동 감지!</b>\n▫️ 감지된 비율: <b>{split_ratio}배</b> (발생일: {split_date})\n▫️ 봇이 기존 장부의 수량과 평단가를 100% 무인 자동 소급 조정 완료했습니다.", parse_mode='HTML')
+                    await context.bot.send_message(chat_id, f"✂️ <b>[{ticker}] 야 파이낸스 {split_type} 자동 감지!</b>\n▫️ 감지된 비율: <b>{split_ratio}배</b> (발생일: {split_date})\n▫️ 봇이 기존 장부의 수량과 평단가를 100% 무인 자동 소급 조정 완료했습니다.", parse_mode='HTML')
                 
                 kst = pytz.timezone('Asia/Seoul')
                 now_kst = datetime.datetime.now(kst)
@@ -367,21 +485,42 @@ class TelegramController:
                     target_kis_str = now_kst.strftime('%Y%m%d')
                     target_ledger_str = now_kst.strftime('%Y-%m-%d')
 
-                target_execs = await asyncio.to_thread(self.broker.get_execution_history, ticker, target_kis_str, target_kis_str)
-                
-                if target_execs:
-                    calibrated_count = self.cfg.calibrate_ledger_prices(ticker, target_ledger_str, target_execs)
-                    if calibrated_count > 0:
-                        logging.info(f"🔧 [{ticker}] LOC/MOC 주문 {calibrated_count}건에 대해 실제 체결 단가 소급 업데이트를 완료했습니다.")
-
                 _, holdings = self.broker.get_account_balance()
                 if holdings is None:
                     await context.bot.send_message(chat_id, f"❌ <b>[{ticker}] API 오류</b>\n잔고를 불러오지 못했습니다.", parse_mode='HTML')
                     return "ERROR"
 
-                actual_qty = int(holdings.get(ticker, {'qty': 0})['qty'])
-                actual_avg = float(holdings.get(ticker, {'avg': 0})['avg'])
-                
+                actual_qty = int(float(holdings.get(ticker, {'qty': 0}).get('qty') or 0))
+                actual_avg = float(holdings.get(ticker, {'avg': 0}).get('avg') or 0.0)
+
+                if self.cfg.get_version(ticker) == "V_REV":
+                    if not getattr(self, 'queue_ledger', None):
+                        from queue_ledger import QueueLedger
+                        self.queue_ledger = QueueLedger()
+                    
+                    q_data_before = self.queue_ledger.get_queue(ticker)
+                    ledger_qty = sum(int(float(item.get("qty") or 0)) for item in q_data_before)
+                    
+                    if actual_qty == 0 and ledger_qty > 0:
+                        self.queue_ledger.sync_with_broker(ticker, 0)
+                        msg = f"🎉 <b>[{ticker} V-REV 잭팟 스윕(전량 익절) 감지!]</b>\n▫️ 잔고가 0주가 되어 LIFO 큐 지층을 100% 소각(초기화)했습니다."
+                        await context.bot.send_message(chat_id, msg, parse_mode='HTML')
+                        self._sync_escrow_cash(ticker)
+                        return "SUCCESS"
+                        
+                    calibrated = self.queue_ledger.sync_with_broker(ticker, actual_qty)
+                    if calibrated:
+                        await context.bot.send_message(chat_id, f"🔧 <b>[{ticker}] V-REV 큐(Queue) 비파괴 보정(CALIB) 완료!</b>\n▫️ KIS 실제 잔고(<b>{actual_qty}주</b>)에 맞춰 LIFO 지층을 정밀 차감/추가했습니다.", parse_mode='HTML')
+                    
+                    self._sync_escrow_cash(ticker)
+                    return "SUCCESS"
+
+                target_execs = await asyncio.to_thread(self.broker.get_execution_history, ticker, target_kis_str, target_kis_str)
+                if target_execs:
+                    calibrated_count = self.cfg.calibrate_ledger_prices(ticker, target_ledger_str, target_execs)
+                    if calibrated_count > 0:
+                        logging.info(f"🔧 [{ticker}] LOC/MOC 주문 {calibrated_count}건에 대해 실제 체결 단가 소급 업데이트를 완료했습니다.")
+
                 recs = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker]
                 ledger_qty, avg_price, _, _ = self.cfg.calculate_holdings(ticker, recs)
                 
@@ -393,26 +532,32 @@ class TelegramController:
                         kst = pytz.timezone('Asia/Seoul')
                         today_str = datetime.datetime.now(kst).strftime('%Y-%m-%d')
                         prev_c = await asyncio.to_thread(self.broker.get_previous_close, ticker)
-                        new_hist, added_seed = self.cfg.archive_graduation(ticker, today_str, prev_c)
-                        msg = f"🎉 <b>[{ticker} 졸업 확인!]</b>\n장부를 명예의 전당에 저장하고 새 사이클을 준비합니다."
-                        if added_seed > 0: msg += f"\n💸 <b>자동 복리 +${added_seed:,.0f}</b> 이 다음 운용 시드에 완벽하게 추가되었습니다!"
-                        await context.bot.send_message(chat_id, msg, parse_mode='HTML')
-
-                        if new_hist:
-                            try:
-                                img_path = self.view.create_profit_image(
-                                    ticker=ticker,
-                                    profit=new_hist['profit'],
-                                    yield_pct=new_hist['yield'],
-                                    invested=new_hist['invested'],
-                                    revenue=new_hist['revenue'],
-                                    end_date=new_hist['end_date']
-                                )
-                                if os.path.exists(img_path):
-                                    with open(img_path, 'rb') as photo:
-                                        await context.bot.send_photo(chat_id=chat_id, photo=photo)
-                            except Exception as e:
-                                logging.error(f"📸 졸업 이미지 생성/발송 실패: {e}")
+                        
+                        try:
+                            new_hist, added_seed = self.cfg.archive_graduation(ticker, today_str, prev_c)
+                            
+                            if new_hist:
+                                msg = f"🎉 <b>[{ticker} 졸업 확인!]</b>\n장부를 명예의 전당에 저장하고 새 사이클을 준비합니다."
+                                if added_seed > 0: msg += f"\n💸 <b>자동 복리 +${added_seed:,.0f}</b> 이 다음 운용 시드에 완벽하게 추가되었습니다!"
+                                await context.bot.send_message(chat_id, msg, parse_mode='HTML')
+                                try:
+                                    img_path = self.view.create_profit_image(
+                                        ticker=ticker, profit=new_hist['profit'], yield_pct=new_hist['yield'],
+                                        invested=new_hist['invested'], revenue=new_hist['revenue'], end_date=new_hist['end_date']
+                                    )
+                                    if os.path.exists(img_path):
+                                        with open(img_path, 'rb') as photo:
+                                            await context.bot.send_photo(chat_id=chat_id, photo=photo)
+                                except Exception as e:
+                                    logging.error(f"📸 졸업 이미지 발송 실패: {e}")
+                            else:
+                                all_recs = [r for r in self.cfg.get_ledger() if r['ticker'] != ticker]
+                                self.cfg._save_json(self.cfg.FILES["LEDGER"], all_recs)
+                                await context.bot.send_message(chat_id, f"⚠️ <b>[{ticker} 강제 정산 완료]</b>\n잔고가 0주이나 마이너스 수익 상태이므로 명예의 전당 박제 없이 장부를 비우고 새출발 타점을 장전합니다.", parse_mode='HTML')
+                        except Exception as e:
+                            all_recs = [r for r in self.cfg.get_ledger() if r['ticker'] != ticker]
+                            self.cfg._save_json(self.cfg.FILES["LEDGER"], all_recs)
+                            logging.error(f"강제 졸업 처리 중 에러: {e}")
 
                     self._sync_escrow_cash(ticker) 
                     return "SUCCESS"
@@ -512,8 +657,8 @@ class TelegramController:
                 
             report += "-"*30 + "</code>\n"
             
-            actual_qty = int(pre_fetched_holdings.get(ticker, {'qty': 0})['qty']) if pre_fetched_holdings else 0
-            actual_avg = float(pre_fetched_holdings.get(ticker, {'avg': 0})['avg']) if pre_fetched_holdings else 0.0
+            actual_qty = int(float(pre_fetched_holdings.get(ticker, {'qty': 0})['qty'] or 0)) if pre_fetched_holdings else 0
+            actual_avg = float(pre_fetched_holdings.get(ticker, {'avg': 0})['avg'] or 0.0) if pre_fetched_holdings else 0.0
             
             split = self.cfg.get_split_count(ticker)
             t_val, _ = self.cfg.get_absolute_t_val(ticker, actual_qty, actual_avg)
@@ -528,7 +673,11 @@ class TelegramController:
 
         tickers = self.cfg.get_active_tickers()
         keyboard = []
-        row = [InlineKeyboardButton(t, callback_data=f"REC:SYNC:{t}") for t in tickers]
+        
+        if self.cfg.get_version(ticker) == "V_REV":
+            keyboard.append([InlineKeyboardButton(f"🗄️ {ticker} V-REV 큐(Queue) 정밀 관리", callback_data=f"QUEUE:VIEW:{ticker}")])
+            
+        row = [InlineKeyboardButton(f"🔄 {t} 장부 업데이트", callback_data=f"REC:SYNC:{t}") for t in tickers]
         keyboard.append(row)
         markup = InlineKeyboardMarkup(keyboard)
 
@@ -548,19 +697,7 @@ class TelegramController:
 
     async def cmd_mode(self, update, context):
         if not self._is_admin(update): return
-        
         active_tickers = self.cfg.get_active_tickers()
-        is_all_v17 = all(self.cfg.get_version(t) == "V17" for t in active_tickers)
-        
-        if is_all_v17:
-            msg = (
-                "🦇 <b>[ V17 시크릿 네이티브 가동 중 ]</b>\n\n"
-                "현재 운용 중인 모든 종목이 <b>V17 시크릿 모드</b>로 설정되어 있습니다.\n"
-                "V17 아키텍처는 상방 및 하방 스나이퍼가 코어 엔진에 100% 내장되어 상시 자동 격발되므로, "
-                "별도의 스나이퍼 ON/OFF 제어가 필요하지 않습니다. 🎯"
-            )
-            await update.message.reply_text(msg, parse_mode='HTML')
-            return
 
         report = "📊 <b>[ 자율주행 변동성 마스터 지표 상세 분석 ]</b>\n\n"
         
@@ -598,8 +735,6 @@ class TelegramController:
             report += f"▫️ 당일 절대 지수({real_name}): {real_val:.2f}\n"
             report += f"▫️ 진단 : {status_icon} {diag_text}\n\n"
 
-        report += "⚠️ <b>[매도 엔진 충돌 경고]</b> 스나이퍼 수동 가동 시 VWAP 매도 엔진과 충돌합니다. 스나이퍼가 명중하여 KIS 원장에 체결 이력이 기록될 경우, 다중 매도 방지 락온 로직에 의해 당일 VWAP 매도 스케줄러는 즉각 가동 중단(Lock-down) 처리됩니다.\n\n"
-        
         report += "🎯 <b>[ 수동 상방 스나이퍼 독립 제어 ]</b>\n"
         keyboard = []
         for t in active_tickers:
@@ -665,19 +800,19 @@ class TelegramController:
                 is_sniper_active_time = True
 
         for t in active_tickers:
-            if self.cfg.get_version(t) == "V17":
-                atr_data[t] = await asyncio.to_thread(self.broker.get_atr_data, t)
-                idx_ticker = "SOXX" if t == "SOXL" else "QQQ"
-                dynamic_target_data[t] = await asyncio.to_thread(self.broker.get_dynamic_sniper_target, idx_ticker)
-                
-                if dynamic_target_data[t] is not None:
-                    dynamic_target_data[t].is_sniper_active_time = is_sniper_active_time
-            else:
-                atr_data[t] = (0.0, 0.0)
-                dynamic_target_data[t] = None
+            atr_data[t] = (0.0, 0.0)
+            dynamic_target_data[t] = None
                 
         msg, markup = self.view.get_settlement_message(active_tickers, self.cfg, atr_data, dynamic_target_data)
-        await status_msg.edit_text(msg, reply_markup=markup, parse_mode='HTML')
+        
+        # 💡 [다이어트 완료] V_VWAP 전환 버튼 소각 및 2대 코어 전용 버튼 렌더링
+        keyboard = list(markup.inline_keyboard) if markup else []
+        for t in active_tickers:
+            keyboard.append([InlineKeyboardButton(f"🔄 [{t}] V_REV (역추세 하이브리드) 전환", callback_data=f"SET_VER:V_REV:{t}")])
+            keyboard.append([InlineKeyboardButton(f"▶️ [{t}] V14 (오리지널 무매) 전환", callback_data=f"SET_VER:V14:{t}")])
+        
+        new_markup = InlineKeyboardMarkup(keyboard)
+        await status_msg.edit_text(msg, reply_markup=new_markup, parse_mode='HTML')
 
     async def cmd_version(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._is_admin(update): return
@@ -691,7 +826,78 @@ class TelegramController:
         data = query.data.split(":")
         action, sub = data[0], data[1] if len(data) > 1 else ""
 
-        if action == "VERSION":
+        if action == "QUEUE":
+            if sub == "VIEW":
+                ticker = data[2]
+                if self.queue_ledger:
+                    q_data = self.queue_ledger.get_queue(ticker)
+                else:
+                    q_data = []
+                    try:
+                        if os.path.exists("data/queue_ledger.json"):
+                            with open("data/queue_ledger.json", "r", encoding='utf-8') as f:
+                                q_data = json.load(f).get(ticker, [])
+                    except: pass
+                msg, markup = self.view.get_queue_management_menu(ticker, q_data)
+                await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+
+        elif action == "DEL_REQ":
+            ticker = sub
+            target_date = ":".join(data[2:])
+            
+            q_data = self.queue_ledger.get_queue(ticker) if self.queue_ledger else []
+            if not q_data:
+                try:
+                    with open("data/queue_ledger.json", "r") as f:
+                        q_data = json.load(f).get(ticker, [])
+                except: pass
+            
+            qty, price = 0, 0.0
+            for item in q_data:
+                if item.get('date') == target_date:
+                    qty = item.get('qty', 0)
+                    price = item.get('price', 0.0)
+                    break
+                    
+            msg, markup = self.view.get_queue_action_confirm_menu(ticker, target_date, qty, price)
+            await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+
+        elif action in ["DEL_Q", "EDIT_Q"]:
+            ticker = sub
+            target_date = ":".join(data[2:])
+            
+            try:
+                q_file = "data/queue_ledger.json"
+                all_q = {}
+                if os.path.exists(q_file):
+                    with open(q_file, 'r', encoding='utf-8') as f:
+                        all_q = json.load(f)
+                
+                ticker_q = all_q.get(ticker, [])
+                
+                if action == "DEL_Q":
+                    new_q = [item for item in ticker_q if item.get('date') != target_date]
+                    await self._verify_and_update_queue(ticker, new_q, context, query.message.chat_id)
+                    await query.answer(f"✅ 삭제 완료.", show_alert=False)
+                    
+                    msg, markup = self.view.get_queue_management_menu(ticker, new_q)
+                    await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+                    
+                elif action == "EDIT_Q":
+                    await query.answer("✏️ 수정 모드 진입", show_alert=False)
+                    short_date = target_date[:10]
+                    self.user_states[update.effective_chat.id] = f"EDITQ_{ticker}_{target_date}"
+                    
+                    prompt = f"✏️ <b>[{ticker} 지층 수정 모드]</b>\n"
+                    prompt += f"선택하신 <b>[{short_date}]</b> 지층을 재설정합니다.\n\n"
+                    prompt += f"새로운 <b>[수량]</b>과 <b>[평단가]</b>를 띄어쓰기로 입력하세요.\n"
+                    prompt += f"(예: <code>229 52.16</code>)\n\n"
+                    prompt += f"<i>(입력을 취소하려면 숫자 이외의 문자를 보내주세요)</i>"
+                    await query.edit_message_text(prompt, parse_mode='HTML')
+            except Exception as e:
+                await query.answer(f"❌ 처리 중 에러 발생: {e}", show_alert=True)
+
+        elif action == "VERSION":
             history_data = self.cfg.get_full_version_history()
             if sub == "LATEST":
                 msg, markup = self.view.get_version_message(history_data, page_index=None)
@@ -716,19 +922,39 @@ class TelegramController:
                 await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
             elif sub == "CONFIRM":
                 ticker = data[2]
+                
                 self.cfg.set_reverse_state(ticker, False, 0)
                 self.cfg.clear_escrow_cash(ticker) 
                 
-                ledger_data = self.cfg.get_ledger()
-                changed = False
-                for lr in ledger_data:
-                    if lr.get('ticker') == ticker and lr.get('is_reverse', False):
-                        lr['is_reverse'] = False
-                        changed = True
-                if changed:
-                    self.cfg._save_json(self.cfg.FILES["LEDGER"], ledger_data)
+                ledger_data = [r for r in self.cfg.get_ledger() if r.get('ticker') != ticker]
+                self.cfg._save_json(self.cfg.FILES["LEDGER"], ledger_data)
+                
+                backup_file = self.cfg.FILES["LEDGER"].replace(".json", "_backup.json")
+                if os.path.exists(backup_file):
+                    try:
+                        with open(backup_file, 'r', encoding='utf-8') as f:
+                            b_data = json.load(f)
+                        b_data = [r for r in b_data if r.get('ticker') != ticker]
+                        with open(backup_file, 'w', encoding='utf-8') as f:
+                            json.dump(b_data, f, ensure_ascii=False, indent=4)
+                    except: pass
+                
+                q_file = "data/queue_ledger.json"
+                if os.path.exists(q_file):
+                    try:
+                        with open(q_file, 'r', encoding='utf-8') as f:
+                            q_data = json.load(f)
+                        if ticker in q_data:
+                            del q_data[ticker]
+                        with open(q_file, 'w', encoding='utf-8') as f:
+                            json.dump(q_data, f, ensure_ascii=False, indent=4)
+                    except: pass
                     
-                await query.edit_message_text(f"✅ <b>[{ticker}] 리버스 모드 및 가상장부(Escrow)가 모두 강제 초기화되었습니다.</b>\n(과거 리버스 꼬리표 소각 완료. 다음 주문부터 일반 모드로 복귀합니다.)", parse_mode='HTML')
+                if getattr(self, 'queue_ledger', None) and hasattr(self.queue_ledger, 'queues') and ticker in self.queue_ledger.queues:
+                    del self.queue_ledger.queues[ticker]
+                    
+                await query.edit_message_text(f"✅ <b>[{ticker}] 삼위일체 소각(Nuke) 및 초기화 완료!</b>\n▫️ 본장부, 백업장부, 큐(Queue), 에스크로의 찌꺼기 데이터가 100% 영구 삭제되었습니다.\n▫️ 다음 매수 진입 시 0주 새출발 디커플링 타점 모드로 완벽히 재시작합니다.", parse_mode='HTML')
+            
             elif sub == "CANCEL":
                 await query.edit_message_text("❌ 안전 통제실 메뉴를 닫습니다.", parse_mode='HTML')
 
@@ -761,9 +987,6 @@ class TelegramController:
                     await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
             elif sub == "LIST": 
                 await self.cmd_history(update, context)
-            # ==========================================================
-            # 💡 [핵심 수술] 프리미엄 졸업 카드 수동 발급 트리거
-            # ==========================================================
             elif sub == "IMG":
                 ticker = data[2]
                 hist_list = [h for h in self.cfg.get_history() if h['ticker'] == ticker]
@@ -772,7 +995,6 @@ class TelegramController:
                     await context.bot.send_message(update.effective_chat.id, f"📭 <b>[{ticker}]</b> 발급 가능한 졸업 기록이 존재하지 않습니다.", parse_mode='HTML')
                     return
                 
-                # 가장 최근 졸업 이력 추출
                 latest_hist = sorted(hist_list, key=lambda x: x.get('end_date', ''), reverse=True)[0]
                 
                 try:
@@ -811,10 +1033,9 @@ class TelegramController:
                 
                 is_rev = plan.get('is_reverse', False)
                 
-                if ver == "V17": ver_display = "V17 시크릿"
-                elif ver == "V_VWAP": ver_display = "VWAP 자율주행 (페일세이프 장전)"
-                elif ver == "V14": ver_display = "무매4"
-                else: ver_display = "무매3"
+                # 💡 [다이어트 완료] V_VWAP 표기 적출
+                if ver == "V_REV": ver_display = "V_REV 역추세 하이브리드"
+                else: ver_display = "V14 무매4"
                 
                 title = f"🔄 <b>[{t}] {ver_display} 리버스 주문 수동 실행</b>\n" if is_rev else f"💎 <b>[{t}] 정규장 주문 수동 실행</b>\n"
                 msg = title
@@ -850,13 +1071,48 @@ class TelegramController:
             new_ver = sub
             ticker = data[2]
             
-            if new_ver == "V13": new_ver_display = "무매3"
-            elif new_ver == "V14": new_ver_display = "무매4"
-            elif new_ver == "V_VWAP": new_ver_display = "VWAP 자율주행"
-            else: new_ver_display = new_ver
+            if new_ver == "V_REV":
+                if not (os.path.exists("strategy_reversion.py") and os.path.exists("queue_ledger.py")):
+                    await query.answer("🚨 [개봉박두] V-REV 엔진 모듈 파일이 존재하지 않아 전환할 수 없습니다! (업데이트 필요)", show_alert=True)
+                    return
+                self.cfg.set_upward_sniper_mode(ticker, False)
+            
+            # 💡 [다이어트 완료] V_VWAP 표기 적출
+            if new_ver == "V_REV": new_ver_display = "V_REV 역추세 하이브리드"
+            else: new_ver_display = "V14 무매4"
             
             self.cfg.set_version(ticker, new_ver)
             await query.edit_message_text(f"✅ <b>[{ticker}]</b> 퀀트 엔진이 <b>{new_ver_display}</b> 모드로 직접 전환되었습니다.\n/sync 명령어에서 변경된 지시서를 확인하세요.", parse_mode='HTML')
+
+        elif action == "SET_INIT":
+            ticker = data[2]
+            if sub == "V_REV":
+                msg, markup = self.view.get_init_v_rev_confirm_menu(ticker)
+                await query.edit_message_text(msg, reply_markup=markup, parse_mode='HTML')
+                return
+
+            elif sub == "EXEC_CONFIRM":
+                await query.answer("⏳ 장부 재구성 중...")
+                async with self.tx_lock:
+                    _, holdings = self.broker.get_account_balance()
+                h = holdings.get(ticker, {'qty': 0, 'avg': 0})
+                qty = int(h['qty'])
+                avg = float(h['avg'])
+                
+                if qty > 0:
+                    new_q = [{
+                        "qty": qty,
+                        "price": avg,
+                        "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "type": "INIT_TRANSFERRED" 
+                    }]
+                    try:
+                        await self._verify_and_update_queue(ticker, new_q, context, query.message.chat_id)
+                        await query.edit_message_text(f"✅ <b>[{ticker}] 자동 물량 이관 및 초기화 완료!</b>\n\n<b>{qty}주</b>(평단 <b>${avg:.2f}</b>)의 단일 기초 블록으로 완벽히 재구성되었습니다.", parse_mode='HTML')
+                    except Exception as e:
+                        await query.edit_message_text(f"❌ 쓰기 오류 발생: {e}", parse_mode='HTML')
+                else:
+                    await query.edit_message_text(f"⚠️ <b>[{ticker}] 보유 물량이 없어 이관할 대상이 없습니다.</b>", parse_mode='HTML')
 
         elif action == "TICKER":
             self.cfg.set_active_tickers([sub] if sub != "ALL" else ["SOXL", "TQQQ"])
@@ -865,6 +1121,11 @@ class TelegramController:
         elif action == "MODE":
             mode_val = sub
             ticker = data[2] if len(data) > 2 else "SOXL"
+            
+            if self.cfg.get_version(ticker) == "V_REV" and mode_val == "ON":
+                await query.answer("🚨 V-REV 역추세 모드에서는 로직 충돌 방지를 위해 상방 스나이퍼를 켤 수 없습니다!", show_alert=True)
+                return
+                
             self.cfg.set_upward_sniper_mode(ticker, mode_val == "ON")
             await query.edit_message_text(f"✅ <b>[{ticker}]</b> 상방 스나이퍼 모드 변경 완료: {'🎯 ON (가동중)' if mode_val == 'ON' else '⚪ OFF (대기중)'}", parse_mode='HTML')
             
@@ -872,6 +1133,7 @@ class TelegramController:
             ticker = data[2]
             self.user_states[update.effective_chat.id] = f"SEED_{sub}_{ticker}"
             await context.bot.send_message(update.effective_chat.id, f"💵 [{ticker}] 시드머니 금액 입력:")
+            
         elif action == "INPUT":
             ticker = data[2]
             self.user_states[update.effective_chat.id] = f"CONF_{sub}_{ticker}"
@@ -889,68 +1151,55 @@ class TelegramController:
         chat_id = update.effective_chat.id
         state = self.user_states.get(chat_id)
         if not state: return
-        
-        # ==========================================================
-        # 💡 [핵심 수술] 다중 P매매 지시서 파싱 및 P-VWAP 대기열 소각(OFF) 인터셉트 스위치
-        # ==========================================================
-        if state.startswith("P_TRADE_"):
-            parts = state.split("_")
-            ticker = parts[2]
-            multiplier = float(parts[3])
-            
-            raw_text = update.message.text.strip()
-            
-            # 💡 [OFF 스위치 엔진] 특수 명령어 감지 시 즉시 대기열 강제 철거 및 엔진 무효화
-            if raw_text.upper() in ["OFF", "취소", "종료", "끄기", "CANCEL", "STOP"]:
-                self.cfg.clear_p_trade_data()
-                await update.message.reply_text("🗑️ <b>[ P-VWAP 대기열 소각 (OFF) 완료 ]</b>\n당일 P매매 타격 대기열이 완벽히 비워졌으며 15:30 스케줄러 타격이 무효화되었습니다.", parse_mode='HTML')
-                del self.user_states[chat_id]
-                return
-                
-            raw_items = raw_text.replace('\n', ',').split(',')
-            
-            parsed_list = []
-            for item in raw_items:
-                item = item.strip()
-                if not item: continue
-                tokens = item.split()
-                if len(tokens) >= 3:
-                    side_kr = tokens[0]
-                    price_str = tokens[1]
-                    qty_str = tokens[2]
-                    
-                    try:
-                        side = "SELL" if "매도" in side_kr else "BUY"
-                        target_price = float(price_str)
-                        base_qty = float(qty_str)
-                        
-                        # KIS API 정수 규격 준수 (Floor 함수로 내림 처리)
-                        final_qty = math.floor(base_qty * multiplier) 
-                        
-                        if final_qty > 0:
-                            parsed_list.append({
-                                'side': side,
-                                'target_price': target_price,
-                                'qty': final_qty,
-                                'rem_qty': final_qty  # VWAP 분할 타격 시 차감될 잔여 수량
-                            })
-                    except ValueError:
-                        continue 
-            
-            if parsed_list:
-                p_data = self.cfg.get_p_trade_data()
-                p_data[ticker] = parsed_list
-                self.cfg.set_p_trade_data(p_data)
-                
-                msg = self.view.get_p_trade_parsed_message(multiplier, parsed_list)
-                await update.message.reply_text(msg, parse_mode='HTML')
-            else:
-                await update.message.reply_text("❌ <b>[입력 양식 오류]</b> 파싱에 실패했습니다.\n예시: <code>매도 45.50 10, 매수 42.00 15</code>\n취소하려면 <code>OFF</code> 또는 <code>취소</code>를 입력하세요.", parse_mode='HTML')
-            
-            del self.user_states[chat_id]
-            return
 
         try:
+            if state.startswith("EDITQ_"):
+                parts = state.split("_", 2)
+                ticker = parts[1]
+                target_date = parts[2]
+                
+                input_parts = update.message.text.strip().split()
+                if len(input_parts) != 2:
+                    del self.user_states[chat_id]
+                    return await update.message.reply_text("❌ 입력 형식 오류입니다. 띄어쓰기로 수량과 평단가를 입력해주세요. (수정 취소됨)")
+                
+                try:
+                    qty = int(input_parts[0])
+                    price = float(input_parts[1])
+                except ValueError:
+                    del self.user_states[chat_id]
+                    return await update.message.reply_text("❌ 수량/평단가는 숫자로 입력하세요. (수정 취소됨)")
+                
+                try:
+                    curr_p = await asyncio.wait_for(
+                        asyncio.to_thread(self.broker.get_current_price, ticker), 
+                        timeout=3.0
+                    )
+                    if curr_p and curr_p > 0 and (price < curr_p * 0.7 or price > curr_p * 1.3):
+                        del self.user_states[chat_id]
+                        return await update.message.reply_text(f"🚨 <b>팻핑거 방어 가동:</b> 입력가(${price:.2f})가 현재가(${curr_p:.2f}) 대비 ±30%를 초과합니다. 다시 시도해주세요.", parse_mode='HTML')
+                except Exception:
+                    pass
+
+                q_file = "data/queue_ledger.json"
+                all_q = {}
+                if os.path.exists(q_file):
+                    with open(q_file, 'r', encoding='utf-8') as f:
+                        all_q = json.load(f)
+                        
+                ticker_q = all_q.get(ticker, [])
+                for item in ticker_q:
+                    if item.get('date') == target_date:
+                        item['qty'] = qty
+                        item['price'] = price
+                        break
+                
+                await self._verify_and_update_queue(ticker, ticker_q, context, chat_id)
+                del self.user_states[chat_id]
+                short_date = target_date[:10]
+                await update.message.reply_text(f"✅ <b>[{ticker}] 지층 정밀 수정 완료!</b>\n▫️ {short_date} | {qty}주 | ${price:.2f}\n▫️ 확인: 장부 하단 🗄️ 버튼", parse_mode='HTML')
+                return
+
             val = float(update.message.text.strip())
             parts = state.split("_")
             
