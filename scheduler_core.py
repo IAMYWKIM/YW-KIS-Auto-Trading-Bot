@@ -1,6 +1,9 @@
 # ==========================================================
-# [scheduler_core.py]
+# [scheduler_core.py] - Part 1/2 부 (상반부)
 # ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
+# 💡 [V24.09 패치] API 결측치(None) 방어용 Safe Casting 전면 이식 완료
+# 💡 [V24.10 수술] V_REV 동적 에스크로 차감 방어 (이중 차감 방지)
+# 🚨 [V25.02 수술] 리버스 모드 일일 1회 확정 탈출(TQQQ -15% / SOXL -20%) 엔진 팩트 이식
 # ==========================================================
 import os
 import logging
@@ -41,36 +44,61 @@ def is_market_open():
 def get_budget_allocation(cash, tickers, cfg):
     sorted_tickers = sorted(tickers, key=lambda x: 0 if x == "SOXL" else (1 if x == "TQQQ" else 2))
     allocated = {}
-    rem_cash = cash
+    
+    # 💡 [핵심 수술] API 결측치(None) 방어 및 순수 가용 예산(Free Cash) 도출
+    safe_cash = float(cash) if cash is not None else 0.0
+    
+    # 💡 [V24.10 수술] 동적 에스크로 락다운 (예산 이중 차감 방어)
+    dynamic_total_locked = 0.0
+    for tx in tickers:
+        rev_state = cfg.get_reverse_state(tx)
+        if rev_state.get("is_active", False):
+            # KIS 계좌에 LOC 지정가 등으로 묶였는지(Flag) 확인. getattr 방어.
+            is_locked = getattr(cfg, 'get_order_locked', lambda x: False)(tx)
+            if not is_locked:
+                # 주문이 안 들어간 경우에만 방어를 위해 봇 내부 차감 실행
+                dynamic_total_locked += float(cfg.get_escrow_cash(tx) or 0.0)
+
+    free_cash = max(0.0, safe_cash - dynamic_total_locked)
     
     for tx in sorted_tickers:
         rev_state = cfg.get_reverse_state(tx)
         is_rev = rev_state.get("is_active", False)
         
+        # 본인 종목을 제외한 타 종목의 동적 잠금 예산 역산 앵커링
+        other_locked = dynamic_total_locked
         if is_rev:
-            portion = 0.0
+            is_locked = getattr(cfg, 'get_order_locked', lambda x: False)(tx)
+            if not is_locked:
+                other_locked -= float(cfg.get_escrow_cash(tx) or 0.0)
+        
+        if is_rev:
+            # 💡 [핵심 수술] 리버스 모드 종목은 공유 예산(rem_cash) 탈취를 금지하고 오직 자신의 에스크로만 락온
+            my_escrow = float(cfg.get_escrow_cash(tx) or 0.0)
+            allocated[tx] = my_escrow + other_locked
         else:
-            split = cfg.get_split_count(tx)
-            portion = cfg.get_seed(tx) / split if split > 0 else 0
+            split = int(cfg.get_split_count(tx) or 0)
+            seed = float(cfg.get_seed(tx) or 0.0)
+            portion = seed / split if split > 0 else 0.0
             
-        if rem_cash >= portion:
-            allocated[tx] = rem_cash
-            rem_cash -= portion
-        else: 
-            allocated[tx] = 0
+            if free_cash >= portion:
+                allocated[tx] = free_cash + other_locked
+                free_cash -= portion
+            else: 
+                allocated[tx] = other_locked
                 
     return sorted_tickers, allocated
 
 def get_actual_execution_price(execs, target_qty, side_cd):
     if not execs: return 0.0
     
-    execs.sort(key=lambda x: x.get('ord_tmd', '000000'), reverse=True)
+    execs.sort(key=lambda x: str(x.get('ord_tmd') or '000000'), reverse=True)
     matched_qty = 0
     total_amt = 0.0
     for ex in execs:
         if ex.get('sll_buy_dvsn_cd') == side_cd: 
-            eqty = int(float(ex.get('ft_ccld_qty', '0')))
-            eprice = float(ex.get('ft_ccld_unpr3', '0'))
+            eqty = int(float(ex.get('ft_ccld_qty') or 0))
+            eprice = float(ex.get('ft_ccld_unpr3') or 0.0)
             if matched_qty + eqty <= target_qty:
                 total_amt += eqty * eprice
                 matched_qty += eqty
@@ -119,8 +147,14 @@ async def scheduled_token_check(context):
     logging.info(f"🔑 [API 토큰 갱신] 서버 동시 접속 부하 방지를 위해 {jitter_seconds}초 대기 후 발급을 시작합니다.")
     await asyncio.sleep(jitter_seconds)
     
+    # 💡 [수술 완료] 오타(tothread) 교정
     await asyncio.to_thread(context.job.data['broker']._get_access_token, force=True)
     logging.info("🔑 [API 토큰 갱신] 토큰 갱신이 안전하게 완료되었습니다.")
+# ==========================================================
+# [scheduler_core.py] - Part 2/2 부 (하반부)
+# 🚨 [V25.02 핵심 수술] 리버스 모드 절대 하드스탑(TQQQ -15% / SOXL -20%) 확정 탈출 엔진 이식
+# 💡 가변 변수(exit_target) 의존성 100% 적출 및 타임 패러독스 원천 차단
+# ==========================================================
 
 async def scheduled_force_reset(context):
     kst = pytz.timezone('Asia/Seoul')
@@ -146,6 +180,11 @@ async def scheduled_force_reset(context):
         
         cfg.reset_locks()
         
+        # 💡 [V24.10 수술] 17:00 매매 스케줄러 초기화 시 주문 상태 플래그 전면 해제
+        for t in cfg.get_active_tickers():
+            if hasattr(cfg, 'set_order_locked'):
+                cfg.set_order_locked(t, False)
+        
         async with tx_lock:
             _, holdings = broker.get_account_balance()
             
@@ -158,14 +197,20 @@ async def scheduled_force_reset(context):
             rev_state = cfg.get_reverse_state(t)
             
             if rev_state.get("is_active"):
-                actual_avg = float(holdings.get(t, {'avg': 0})['avg'])
+                # 💡 [핵심 수술] holdings 객체 내부 키 누락 및 None 캐스팅 방어
+                h_data = holdings.get(t) or {}
+                actual_avg = float(h_data.get('avg') or 0.0)
+                
                 curr_p = await asyncio.to_thread(broker.get_current_price, t)
+                curr_p = float(curr_p or 0.0)
                 
                 if curr_p > 0 and actual_avg > 0:
                     curr_ret = (curr_p - actual_avg) / actual_avg * 100.0
-                    exit_target = rev_state.get("exit_target", 0.0)
                     
-                    if curr_ret >= exit_target:
+                    # 🚨 [V25.02 핵심 수술] 가변 exit_target 의존성 100% 적출 및 절대 하드스탑 팩트 이식
+                    exit_threshold = -15.0 if t == "TQQQ" else -20.0
+                    
+                    if curr_ret >= exit_threshold:
                         cfg.set_reverse_state(t, False, 0, 0.0)
                         cfg.clear_escrow_cash(t)
                         
@@ -178,7 +223,7 @@ async def scheduled_force_reset(context):
                         if changed:
                             cfg._save_json(cfg.FILES["LEDGER"], ledger_data)
                             
-                        msg_addons += f"\n🌤️ <b>[{t}] 리버스 목표 달성({curr_ret:.2f}%)!</b> 격리 병동 졸업 및 Escrow 해제 완료!"
+                        msg_addons += f"\n🌤️ <b>[{t}] 리버스 확정 탈출 조건 달성 (수익률: {curr_ret:.2f}% >= 기준: {exit_threshold}%)!</b>\n▫️ 격리 병동을 즉시 폐쇄하고 V14 본대로 완벽히 복귀했습니다."
                     else:
                         cfg.increment_reverse_day(t)
                 else:
@@ -186,7 +231,7 @@ async def scheduled_force_reset(context):
             else:
                 cfg.increment_reverse_day(t)
                 
-        final_msg = f"🔓 <b>[{target_hour}:00] 시스템 초기화 완료 (매매 잠금 해제 & 고점 관측 센서 가동)</b>" + msg_addons
+        final_msg = f"🔓 <b>[{target_hour}:00] 시스템 일일 초기화 완료 (매매 잠금 해제 & 팩트 스캔)</b>" + msg_addons
         await context.bot.send_message(chat_id=chat_id, text=final_msg, parse_mode='HTML')
         
     except Exception as e:

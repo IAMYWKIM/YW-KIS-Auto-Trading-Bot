@@ -1,6 +1,8 @@
 # ==========================================================
 # [config.py] - Part 1
-# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
+# ⚠️ V_REV 도입에 따른 P매매 잔재 완벽 소각 버전
+# 💡 [V24.10 수술] 동적 에스크로 락다운 깃발(Flag) 제어 로직 추가
+# 💡 [V25.00 수술] AVWAP 하이브리드 전술 상태 저장(캐싱) 파일 경로 및 함수 이식
 # ==========================================================
 import json
 import os
@@ -26,7 +28,6 @@ class ConfigManager:
             "HISTORY": "data/manual_history.json",  
             "SPLIT": "data/split_config.json",
             "TICKER": "data/active_tickers.json",
-            # 💡 [핵심 수술] 단일 파일(.dat)에서 종목별 다중 딕셔너리(.json) 파일로 승격
             "UPWARD_SNIPER": "data/upward_sniper.json", 
             "SECRET_MODE": "data/secret_mode.dat",
             "PROFIT_CFG": "data/profit_config.json",
@@ -37,7 +38,8 @@ class ConfigManager:
             "REVERSE_CFG": "data/reverse_config.json",
             "SNIPER_MULTIPLIER_CFG": "data/sniper_multiplier.json",
             "SPLIT_HISTORY": "data/split_history.json",
-            "P_TRADE_DATA": "data/p_trade_data.json"  
+            # 💡 [V25.00 핵심 수술] AVWAP 하이브리드 전용 로컬 상태 파일 신설
+            "AVWAP_HYBRID_CFG": "data/avwap_hybrid.json"
         }
         
         self.DEFAULT_SEED = {"SOXL": 6720.0, "TQQQ": 6720.0}
@@ -119,17 +121,24 @@ class ConfigManager:
         return self._load_json(self.FILES["LEDGER"], [])
 
     def get_escrow_cash(self, ticker):
-        locks = self._load_json(self.FILES["LOCKS"], {})
-        return float(locks.get(f"ESCROW_{ticker}", 0.0))
+        ledger = self.get_ledger()
+        escrow = 0.0
+        for r in reversed(ledger):
+            if r.get('ticker') == ticker:
+                if r.get('is_reverse', False):
+                    if r['side'] == 'SELL':
+                        escrow += (r['qty'] * r['price'])
+                    elif r['side'] == 'BUY':
+                        escrow -= (r['qty'] * r['price'])
+                else:
+                    break
+        return max(0.0, float(escrow))
 
     def set_escrow_cash(self, ticker, amount):
-        locks = self._load_json(self.FILES["LOCKS"], {})
-        locks[f"ESCROW_{ticker}"] = float(amount)
-        self._save_json(self.FILES["LOCKS"], locks)
+        pass
 
     def add_escrow_cash(self, ticker, amount):
-        current = self.get_escrow_cash(ticker)
-        self.set_escrow_cash(ticker, current + float(amount))
+        pass
 
     def clear_escrow_cash(self, ticker):
         locks = self._load_json(self.FILES["LOCKS"], {})
@@ -138,14 +147,30 @@ class ConfigManager:
             self._save_json(self.FILES["LOCKS"], locks)
 
     def get_total_locked_cash(self, exclude_ticker=None):
-        locks = self._load_json(self.FILES["LOCKS"], {})
         total = 0.0
-        for k, v in locks.items():
-            if k.startswith("ESCROW_"):
-                ticker_in_lock = k.replace("ESCROW_", "")
-                if ticker_in_lock != exclude_ticker:
-                    total += float(v)
+        try:
+            tickers = self.get_active_tickers()
+            for t in tickers:
+                if t != exclude_ticker:
+                    rev_state = self.get_reverse_state(t).get("is_active", False)
+                    if rev_state:
+                        total += self.get_escrow_cash(t)
+        except Exception:
+            pass
         return total
+
+    def get_order_locked(self, ticker):
+        locks = self._load_json(self.FILES["LOCKS"], {})
+        return locks.get(f"ORDER_LOCKED_{ticker}", False)
+
+    def set_order_locked(self, ticker, is_locked):
+        locks = self._load_json(self.FILES["LOCKS"], {})
+        if is_locked:
+            locks[f"ORDER_LOCKED_{ticker}"] = True
+        else:
+            if f"ORDER_LOCKED_{ticker}" in locks:
+                del locks[f"ORDER_LOCKED_{ticker}"]
+        self._save_json(self.FILES["LOCKS"], locks)
 
     def get_absolute_t_val(self, ticker, actual_qty, actual_avg_price):
         seed = self.get_seed(ticker)
@@ -284,7 +309,6 @@ class ConfigManager:
         for r in ledger:
             if r.get('ticker') == ticker and r.get('date') == target_date_str:
                 exec_id = str(r.get('exec_id', ''))
-                # 💡 [핵심 수술] 'CALIB' 방어벽을 해제하여 비파괴 보정 기록도 팩트 단가로 소급 교정되도록 개조
                 if 'INIT' in exec_id:
                     continue
                     
@@ -309,7 +333,9 @@ class ConfigManager:
         self.set_reverse_state(ticker, False, 0, 0.0)
         self.clear_escrow_cash(ticker)
 # ==========================================================
-# [config.py] - Part 2 (이어서 작성)
+# [config.py] - Part 2
+# ⚠️ P매매 소각 완료 및 신규 V_REV 호환 버전
+# 💡 [V25.00 핵심 수술] AVWAP 하이브리드 전술 영구 저장 모듈 이식 완료
 # ==========================================================
 
     def calculate_holdings(self, ticker, records=None):
@@ -536,7 +562,7 @@ class ConfigManager:
 
     def reset_locks(self):
         locks = self._load_json(self.FILES["LOCKS"], {})
-        surviving_locks = {k: v for k, v in locks.items() if k.startswith("ESCROW_")}
+        surviving_locks = {k: v for k, v in locks.items() if k.startswith("ESCROW_") or k.startswith("ORDER_LOCKED_")}
         self._save_json(self.FILES["LOCKS"], surviving_locks)
         
     def reset_lock_for_ticker(self, ticker):
@@ -589,9 +615,6 @@ class ConfigManager:
         d[t] = float(v)
         self._save_json(self.FILES["SNIPER_MULTIPLIER_CFG"], d)
 
-    # ==========================================================
-    # 💡 [핵심 수술] 스나이퍼 상태 종목별(ticker) 독립 제어 개조
-    # ==========================================================
     def get_upward_sniper_mode(self, ticker):
         d = self._load_json(self.FILES["UPWARD_SNIPER"], {})
         return d.get(ticker, False)
@@ -600,6 +623,18 @@ class ConfigManager:
         d = self._load_json(self.FILES["UPWARD_SNIPER"], {})
         d[ticker] = bool(v)
         self._save_json(self.FILES["UPWARD_SNIPER"], d)
+
+    # ==========================================================
+    # 💡 [V25.00 핵심 수술] AVWAP 하이브리드 전술 저장/불러오기 모듈
+    # ==========================================================
+    def get_avwap_hybrid_mode(self, ticker):
+        d = self._load_json(self.FILES["AVWAP_HYBRID_CFG"], {})
+        return d.get(ticker, False)
+
+    def set_avwap_hybrid_mode(self, ticker, v):
+        d = self._load_json(self.FILES["AVWAP_HYBRID_CFG"], {})
+        d[ticker] = bool(v)
+        self._save_json(self.FILES["AVWAP_HYBRID_CFG"], d)
 
     def get_secret_mode(self):
         return self._load_file(self.FILES["SECRET_MODE"]) == 'True'
@@ -619,16 +654,3 @@ class ConfigManager:
 
     def set_chat_id(self, v):
         self._save_file(self.FILES["CHAT_ID"], v)
-
-    # ==========================================================
-    # 💡 P매매 (VWAP) 전용 데이터베이스 I/O 엔진
-    # ==========================================================
-    def get_p_trade_data(self):
-        return self._load_json(self.FILES["P_TRADE_DATA"], {})
-
-    def set_p_trade_data(self, data):
-        self._save_json(self.FILES["P_TRADE_DATA"], data)
-
-    def clear_p_trade_data(self):
-        self._save_json(self.FILES["P_TRADE_DATA"], {})
-
