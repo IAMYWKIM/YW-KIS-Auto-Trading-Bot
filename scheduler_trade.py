@@ -1,9 +1,11 @@
 # ==========================================================
-# [scheduler_trade.py] - Part 1/2 부 (상반부)
+# [scheduler_trade.py] - 🌟 100% 통합 완성본 🌟
 # ⚠️ 수술 내역: 
 # 🚨 [V25.03 긴급 수술] 타임존 Glitch 방어 및 상대적 시간 윈도우(Relative Time Window) 도입
 # 💡 하드코딩된 '15시' 비교를 폐기하고 '장 마감(market_close) 30분 전' 앵커 시스템으로 전면 교체
 # 🚨 [V25.04 패치] 듀얼 레퍼런싱 데이터(SOXX/SOXL) 이원화 호출 및 파이프라인 연동
+# 🚨 [V25.19 핫픽스] 서머타임(DST) 경계일 프리마켓 시간 연산 에러(NonExistentTimeError) 수학적 교정
+# 🚨 [V25.19 핫픽스] 듀얼 레퍼런싱 base_map 매핑 누락 시 파생상품 오호출 맹점 방어
 # ==========================================================
 import os
 import logging
@@ -41,7 +43,8 @@ async def scheduled_sniper_monitor(context):
             market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
         else: return
     
-    pre_start = market_open.replace(hour=4, minute=0)
+    # MODIFIED: [V25.19 핫픽스] DST 전환일(NonExistentTimeError) 방어를 위해 상대적 시간차 연산으로 교체 (High 6)
+    pre_start = market_open - datetime.timedelta(hours=5, minutes=30)
     start_monitor = pre_start + datetime.timedelta(minutes=1)
     end_monitor = market_close - datetime.timedelta(minutes=1)
     
@@ -52,7 +55,9 @@ async def scheduled_sniper_monitor(context):
     
     app_data = context.job.data
     cfg, broker, strategy, tx_lock = app_data['cfg'], app_data['broker'], app_data['strategy'], app_data['tx_lock']
-    base_map = app_data.get('base_map', {})  # NEW: 듀얼 레퍼런싱 매핑 로드
+    
+    # MODIFIED: [V25.19 핫픽스] base_map 누락 시 파생상품을 그대로 호출하는 맹점 방어 (Medium 10)
+    base_map = app_data.get('base_map', {'SOXL': 'SOXX', 'TQQQ': 'QQQ'})
     chat_id = context.job.chat_id
     
     tracking_cache = app_data.setdefault('sniper_tracking', {})
@@ -139,9 +144,9 @@ async def scheduled_sniper_monitor(context):
 # [scheduler_trade.py] - Part 2/2 부 (하반부)
 # 🚨 [V25.03 핵심 수술] 하드코딩 시간(Hour) 폐기 및 상대적 타임 윈도우(Relative Time Window) 이식
 # 🚨 [V25.03 핵심 수술] 기존 LOC 덫 취소 실패 시 자가 치유(Self-Healing Nuke) 방어막 탑재
+# 🚨 [V25.14 분할 LOC 패치] 17:05 정규장 덫 장전 시 1층/상위층 완벽 분리 전송 디커플링 이식
+# 🚨 [V25.16 수학적 교정] 17:05 정규장 덫 1층 데이터 추출 시 배열 인덱싱 병목 소각 및 날짜 기반 합산 로직 완벽 이식
 # ==========================================================
-
-                # (상반부 V14 상방 스나이퍼 로직 종료 이후...)
 
 # ==========================================================
 # 2. 🛡️ Fail-Safe: 선제적 LOC 취소 (기본 스케줄러, 자가치유로 보완됨)
@@ -192,7 +197,6 @@ async def scheduled_vwap_trade(context):
     est = pytz.timezone('US/Eastern')
     now_est = datetime.datetime.now(est)
     
-    # 💡 [핵심 수술 1] 15시 30분 하드코딩 폐기 -> 장 마감 시간(market_close) 동적 획득
     try:
         nyse = mcal.get_calendar('NYSE')
         schedule = nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
@@ -204,7 +208,6 @@ async def scheduled_vwap_trade(context):
     vwap_start_time = market_close - datetime.timedelta(minutes=30)
     vwap_end_time = market_close - datetime.timedelta(minutes=1)
     
-    # 장 마감 30분 전 ~ 1분 전 사이에만 완벽하게 동작
     if not (vwap_start_time <= now_est <= vwap_end_time):
         return
         
@@ -225,7 +228,6 @@ async def scheduled_vwap_trade(context):
         0.0259, 0.0284, 0.0331, 0.0385, 0.0400, 0.0461, 0.0553, 0.0620, 0.0750, 0.1180
     ]
     
-    # 💡 [핵심 수술 2] 장 마감까지 남은 분(minute)을 역산하여 U-Curve 인덱스 매핑
     minutes_to_close = int(max(1, (market_close - now_est).total_seconds()) / 60)
     min_idx = 30 - minutes_to_close
     if min_idx < 0: min_idx = 0
@@ -240,21 +242,19 @@ async def scheduled_vwap_trade(context):
             for t in cfg.get_active_tickers():
                 if cfg.get_version(t) == "V_REV":
                     
-                    # 💡 [핵심 수술 3] 자가 치유(Self-Healing Nuke) 방어막 가동
-                    # 취소 스케줄러가 불발되었더라도 여기서 즉시 팩트 스캔 후 기존 덫 강제 파괴!
                     if not vwap_cache.get(f"REV_{t}_nuked"):
                         try:
                             await asyncio.to_thread(broker.cancel_all_orders_safe, t, "BUY")
                             await asyncio.to_thread(broker.cancel_all_orders_safe, t, "SELL")
                             vwap_cache[f"REV_{t}_nuked"] = True
                             msg = f"🌅 <b>[{t}] 하이브리드 타임 슬라이싱 기상 (자가 치유 가동)</b>\n"
-                            msg += f"▫️ 장 마감 30분 전 진입을 확인하여 기존 LOC 덫을 강제 취소(Nuke)했습니다.\n"
+                            msg += f"▫️ 장 마감 30분 전 진입을 확인하여 기존 LOC 덫 강제 취소(Nuke)했습니다.\n"
                             msg += f"▫️ 스케줄러 누락을 완벽히 극복하고 1분 단위 정밀 타격을 즉각 개시합니다. ⚔️"
                             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML', disable_notification=True)
                             await asyncio.sleep(1.0)
                         except Exception as e:
                             logging.error(f"🚨 자가 치유 Nuke 실패: {e}")
-                            continue # 취소에 실패하면 핑퐁 방지를 위해 다음 1분에 재시도
+                            continue
                             
                     strategy_rev = app_data.get('strategy_rev')
                     queue_ledger = app_data.get('queue_ledger')
@@ -279,7 +279,6 @@ async def scheduled_vwap_trade(context):
                             layer_1_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_for_date) / layer_1_qty
                             layer_1_trigger = round(layer_1_price * 1.006, 2)
                     
-                    # 💡 [핵심 수술 4] 스윕 피니셔 발동 시간을 "장 마감 2분 이하"로 동적 처리
                     if minutes_to_close <= 2 and not vwap_cache.get(f"REV_{t}_sweep_finished"):
                         target_sweep_qty = 0
                         sweep_type = ""
@@ -366,7 +365,6 @@ async def scheduled_vwap_trade(context):
                         min_idx=min_idx, alloc_cash=rev_daily_budget, q_data=q_data
                     )
                     
-                    # 💡 [핵심 수술 5] LOC 전환 기준점을 장 마감 "15분 전 이상 남았을 때"로 동적 처리
                     if rev_plan.get('trigger_loc') and minutes_to_close >= 15:
                         vwap_cache[f"REV_{t}_loc_fired"] = True
                         msg = f"🛡️ <b>[{t}] 60% 거래량 지배력 감지 (추세장 전환)</b>\n"
@@ -497,21 +495,32 @@ async def scheduled_regular_trade(context):
                     rev_budget = float(cfg.get_seed(t) or 0.0) * 0.15
                     
                     half_portion_cash = rev_budget * 0.5
-                    one_portion_qty = math.floor(rev_budget / curr_p) if curr_p > 0 else 0
                     
                     loc_orders = []
                     
-                    if q_data:
-                        recent_lots = list(reversed(q_data))[:3]
-                        for idx, lot in enumerate(recent_lots):
-                            if idx == 0:
-                                target_sell_price = round(lot.get('price', prev_c) * 1.006, 2)
-                            else:
-                                target_sell_price = round(safe_avg * 1.005, 2)
-                                
-                            sell_qty = min(lot['qty'], one_portion_qty) if one_portion_qty > 0 else lot['qty']
-                            if sell_qty > 0:
-                                loc_orders.append({'side': 'SELL', 'qty': sell_qty, 'price': target_sell_price, 'type': 'LOC', 'desc': f'예방적 매도(Pop{idx+1})'})
+                    # MODIFIED: [V25.16 수학적 교정] 17:05 정규장 덫 1층 데이터 추출 팩트 교정 (날짜 기반 합산)
+                    if q_data and safe_qty > 0:
+                        dates_in_queue = sorted(list(set(item.get('date') for item in q_data if item.get('date'))), reverse=True)
+                        l1_qty = 0
+                        l1_price = 0.0
+                        
+                        if dates_in_queue:
+                            lots_1 = [item for item in q_data if item.get('date') == dates_in_queue[0]]
+                            l1_qty = sum(item.get('qty', 0) for item in lots_1)
+                            if l1_qty > 0:
+                                l1_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_1) / l1_qty
+                        
+                        target_l1 = round(l1_price * 1.006, 2)
+                        
+                        if l1_qty > 0:
+                            loc_orders.append({'side': 'SELL', 'qty': l1_qty, 'price': target_l1, 'type': 'LOC', 'desc': '[1층 단독]'})
+                            
+                        upper_qty = safe_qty - l1_qty
+                        if upper_qty > 0:
+                            upper_invested = (safe_qty * safe_avg) - (l1_qty * l1_price)
+                            upper_avg = upper_invested / upper_qty if upper_invested > 0 else safe_avg
+                            target_upper = round(upper_avg * 1.005, 2)
+                            loc_orders.append({'side': 'SELL', 'qty': upper_qty, 'price': target_upper, 'type': 'LOC', 'desc': '[상위 재고]'})
                     
                     if prev_c > 0:
                         b1_price = round(prev_c * 0.999 if v_rev_q_qty == 0 else prev_c * 0.995, 2)
@@ -541,7 +550,7 @@ async def scheduled_regular_trade(context):
 
             for t in v_rev_tickers:
                 msg = f"🎺 <b>[{t}] V-REV 예방적 방어망 장전 완료</b>\n"
-                msg += f"▫️ 프리장이 개장했습니다! 시스템 다운 등 최악의 블랙스완을 대비하여 <b>양방향 종가(LOC) 덫</b>을 KIS 서버에 선제 전송했습니다.\n"
+                msg += f"▫️ 프리장이 개장했습니다! 시스템 다운 등 최악의 블랙스완을 대비하여 <b>지층별 분리 종가(LOC) 덫</b>을 KIS 서버에 선제 전송했습니다.\n"
                 msg += f"▫️ 서버가 무사하다면 장 후반(04:30 KST)에 스스로 깨어나 이 덫을 거두고 추세(60% 허들)를 스캔하여 새로운 최적 전술로 교체합니다! 편안한 밤 보내십시오! 🌙💤\n"
                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
 
@@ -648,4 +657,3 @@ async def scheduled_after_market_lottery(context):
         await asyncio.wait_for(_do_lottery(), timeout=60.0)
     except Exception as e:
         logging.error(f"🚨 애프터마켓 로터리 덫 에러: {e}")
-

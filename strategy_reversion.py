@@ -6,12 +6,19 @@
 # 💡 [V24.16 팩트 동기화] 하락장 방어 매수 Buy2 타점 (0.9725) 교정
 # 💡 [V24.16 팩트 동기화] 1층 전량 익절 타점 고유 매수가 기반(layer_price * 1.006) 원복
 # 🚨 [V25.13 디커플링 스왑 패치] UI와 동일하게 Buy1과 Buy2의 타점을 고가->저가 순으로 스왑 연동
+# 🚨 [V25.14 팩트 동기화] 1층 물귀신 덤핑 차단 및 지층별 평단가 완벽 분리 개별 탈출(Decoupling) 이식
+# 🚨 [V25.15 잔여물량 격리] SELL_L1 / SELL_UPPER / SELL_JACKPOT 독립 큐(Residual) 분리 및 줍줍 무손실 복원 완료
+# 🚨 [V25.17 잔재 소각] 수동 통제망(Telegram) 전환에 따른 자동 긴급 수혈(get_emergency_liquidation_qty) 레거시 함수 영구 삭제
 # ==========================================================
 import math
 
 class ReversionStrategy:
     def __init__(self):
-        self.residual = {"BUY1": {}, "BUY2": {}, "SELL": {}}
+        # NEW: [V25.15] 매도 잔여 물량 추적 저장소를 지층별로 완벽히 분리
+        self.residual = {
+            "BUY1": {}, "BUY2": {}, 
+            "SELL_L1": {}, "SELL_UPPER": {}, "SELL_JACKPOT": {}
+        }
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
         
         # 5년치 실데이터 기반 장마감 30분 비중 정규화 적용 (합산 1.0)
@@ -24,7 +31,9 @@ class ReversionStrategy:
     def reset_residual(self, ticker):
         self.residual["BUY1"][ticker] = 0.0
         self.residual["BUY2"][ticker] = 0.0
-        self.residual["SELL"][ticker] = 0.0
+        self.residual["SELL_L1"][ticker] = 0.0
+        self.residual["SELL_UPPER"][ticker] = 0.0
+        self.residual["SELL_JACKPOT"][ticker] = 0.0
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
 
@@ -41,11 +50,29 @@ class ReversionStrategy:
                 return {"orders": [], "trigger_loc": False}
 
         total_q = sum(item.get("qty", 0) for item in q_data)
-        avg_price = (sum(item.get("qty", 0) * item.get("price", 0.0) for item in q_data) / total_q) if total_q > 0 else 0.0
+        total_inv = sum(item.get('qty', 0) * item.get('price', 0.0) for item in q_data)
+        avg_price = (total_inv / total_q) if total_q > 0 else 0.0
         
+        # MODIFIED: [V25.14] 지층 데이터 분석 및 디커플링 역산
+        dates_in_queue = sorted(list(set(item.get('date') for item in q_data if item.get('date'))), reverse=True)
+        l1_qty, l1_price = 0, 0.0
+        
+        if dates_in_queue:
+            lots_1 = [item for item in q_data if item.get('date') == dates_in_queue[0]]
+            l1_qty = sum(item.get('qty', 0) for item in lots_1)
+            l1_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_1) / l1_qty if l1_qty > 0 else 0.0
+            
+        upper_qty = total_q - l1_qty
+        upper_inv = total_inv - (l1_qty * l1_price)
+        upper_avg = upper_inv / upper_qty if upper_qty > 0 else 0.0
+
+        # 타점 3대장 수학적 정의
+        trigger_jackpot = round(avg_price * 1.010, 2)
+        trigger_l1 = round(l1_price * 1.006, 2)
+        trigger_upper = round(upper_avg * 1.005, 2) if upper_qty > 0 else 0.0
+
         if total_q == 0:
             side = "BUY"
-            # 🚨 MODIFIED: [V25.13 디커플링 스왑 패치] 무조건 Buy1(p1)이 고가, Buy2(p2)가 저가가 되도록 변수 스왑
             p1_trigger = round(prev_c / 0.935, 2)
             p2_trigger = round(prev_c * 0.999, 2)
         else:
@@ -55,11 +82,11 @@ class ReversionStrategy:
 
         is_strong_up = vwap_status.get('is_strong_up', False)
         is_strong_down = vwap_status.get('is_strong_down', False)
-        
         trigger_loc = is_strong_up or is_strong_down 
 
         orders = []
 
+        # 🚀 17:05 선제적 장전 및 장중 스나이퍼 개입 (LOC/Market)
         if trigger_loc:
             total_spent = self.executed["BUY_BUDGET"].get(ticker, 0.0)
             rem_budget = max(0.0, alloc_cash - total_spent)
@@ -73,6 +100,7 @@ class ReversionStrategy:
                 if q1 > 0: orders.append({"side": "BUY", "qty": q1, "price": p1_trigger})
                 if q2 > 0: orders.append({"side": "BUY", "qty": q2, "price": p2_trigger})
                 
+                # MODIFIED: 줍줍(Grid) 로직 무손실 복원
                 max_n = 5
                 if curr_p > 0:
                     required_n = math.ceil(b2_budget / curr_p) - q2
@@ -85,44 +113,24 @@ class ReversionStrategy:
                         if grid_p2 >= 0.01 and grid_p2 < p2_trigger:
                             orders.append({"side": "BUY", "qty": 1, "price": grid_p2})
                 
-            rem_qty = max(0, total_q - self.executed["SELL_QTY"].get(ticker, 0))
-            if rem_qty > 0:
-                jackpot_trigger = avg_price * 1.010
-                
-                if curr_p >= jackpot_trigger:
-                    target_sell_qty = rem_qty 
-                    target_p = round(jackpot_trigger, 2)
+            rem_qty_total = max(0, total_q - self.executed["SELL_QTY"].get(ticker, 0))
+            if rem_qty_total > 0:
+                # 컷오프 1순위: 잭팟 (전체 스윕)
+                if curr_p >= trigger_jackpot:
+                    orders.append({"side": "SELL", "qty": rem_qty_total, "price": trigger_jackpot})
                 else:
-                    target_sell_qty = 0
-                    target_p = 0.0
-                    
-                    dates_in_queue = sorted(list(set(item.get('date') for item in q_data if item.get('date'))), reverse=True)
-                    
-                    for i, d in enumerate(dates_in_queue):
-                        if i >= 3: break 
+                    # 컷오프 2순위: 1층 단독 & 상위층 분리 (개별 발사)
+                    available_l1 = min(l1_qty, rem_qty_total)
+                    if available_l1 > 0 and curr_p >= trigger_l1:
+                        orders.append({"side": "SELL", "qty": available_l1, "price": trigger_l1})
                         
-                        lots_for_date = [item for item in q_data if item.get('date') == d]
-                        grp_qty = sum(item.get('qty', 0) for item in lots_for_date)
-                        if grp_qty == 0: continue
-                        
-                        # 💡 [핵심 수술] 1층(i==0)은 고유 매수가(layer_price) 앵커 적용
-                        if i == 0:
-                            layer_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_for_date) / grp_qty if grp_qty > 0 else prev_c
-                            trigger = round(layer_price * 1.006, 2)
-                        else:
-                            trigger = round(avg_price * 1.005, 2)
-                            
-                        if target_p == 0.0 or trigger < target_p:
-                            target_p = trigger
-                            
-                        target_sell_qty += grp_qty
-
-                safe_sell_qty = min(target_sell_qty, rem_qty)
-                if safe_sell_qty > 0 and target_p > 0:
-                    orders.append({"side": "SELL", "qty": safe_sell_qty, "price": target_p})
+                    available_upper = min(upper_qty, rem_qty_total - available_l1)
+                    if available_upper > 0 and trigger_upper > 0 and curr_p >= trigger_upper:
+                        orders.append({"side": "SELL", "qty": available_upper, "price": trigger_upper})
             
             return {"orders": orders, "trigger_loc": True}
 
+        # 🕒 장 마감 30분 VWAP 타임 슬라이싱 (1분 단위)
         rem_weight = sum(self.U_CURVE_WEIGHTS[min_idx:])
         slice_ratio_sell = current_weight / rem_weight if rem_weight > 0 else 1.0
         
@@ -130,6 +138,7 @@ class ReversionStrategy:
         slice_ratio_buy = current_weight / total_weight if total_weight > 0 else 1.0
 
         if side == "BUY":
+            # MODIFIED: 매수 타임슬라이싱 로직 무손실 복원
             total_spent = self.executed["BUY_BUDGET"].get(ticker, 0.0)
             if total_spent >= alloc_cash:
                 return {"orders": [], "trigger_loc": False}
@@ -152,58 +161,35 @@ class ReversionStrategy:
                     orders.append({"side": "BUY", "qty": alloc_q2, "price": p2_trigger})
 
         else: # SELL
-            if total_q > 0:
-                target_sell_qty = 0
-                jackpot_trigger = avg_price * 1.010
-                sell_price_target = round(prev_c * 1.006, 2)
-                
-                if curr_p >= jackpot_trigger:
-                    target_sell_qty = total_q
-                    sell_price_target = round(jackpot_trigger, 2)
-                else:
-                    dates_in_queue = sorted(list(set(item.get('date') for item in q_data if item.get('date'))), reverse=True)
-                    
-                    target_p = 0.0
-                    for i, d in enumerate(dates_in_queue):
-                        if i >= 3: break 
-                        
-                        lots_for_date = [item for item in q_data if item.get('date') == d]
-                        grp_qty = sum(item.get('qty', 0) for item in lots_for_date)
-                        if grp_qty == 0: continue
-                        
-                        # 💡 [핵심 수술] 1층(i==0)은 고유 매수가(layer_price) 앵커 적용
-                        if i == 0:
-                            layer_price = sum(item.get('qty', 0) * item.get('price', 0.0) for item in lots_for_date) / grp_qty if grp_qty > 0 else prev_c
-                            trigger = round(layer_price * 1.006, 2)
-                        else:
-                            trigger = round(avg_price * 1.005, 2)
-                            
-                        target_sell_qty += grp_qty
-                        
-                        if target_p == 0.0 or trigger < target_p:
-                            target_p = trigger
-                            
-                    if target_p > 0.0:
-                        sell_price_target = target_p
+            rem_qty_total = max(0, total_q - self.executed["SELL_QTY"].get(ticker, 0))
+            if rem_qty_total <= 0:
+                return {"orders": [], "trigger_loc": False}
 
-                rem_qty_to_sell = max(0, target_sell_qty - self.executed["SELL_QTY"].get(ticker, 0))
-                
-                if rem_qty_to_sell > 0:
-                    exact_qs = (target_sell_qty * slice_ratio_sell) + self.residual["SELL"].get(ticker, 0.0)
-                    alloc_qs = math.floor(exact_qs)
-                    
-                    alloc_qs = min(alloc_qs, rem_qty_to_sell)
-                    self.residual["SELL"][ticker] = exact_qs - alloc_qs
-                    
-                    if alloc_qs > 0:
-                        orders.append({"side": "SELL", "qty": alloc_qs, "price": sell_price_target})
+            # 1순위: 잭팟 스캐닝 (도달 시 1층/상위층 연산 폐쇄 및 전량 스윕 할당)
+            if curr_p >= trigger_jackpot:
+                exact_qs = (total_q * slice_ratio_sell) + self.residual["SELL_JACKPOT"].get(ticker, 0.0)
+                alloc_qs = min(math.floor(exact_qs), rem_qty_total)
+                self.residual["SELL_JACKPOT"][ticker] = exact_qs - alloc_qs
+                if alloc_qs > 0:
+                    orders.append({"side": "SELL", "qty": alloc_qs, "price": trigger_jackpot})
+            
+            else:
+                # 2순위: 지층별 개별 타임 슬라이싱 (Decoupled Loop)
+                # A. 1층 루프
+                if l1_qty > 0 and curr_p >= trigger_l1:
+                    exact_l1 = (l1_qty * slice_ratio_sell) + self.residual["SELL_L1"].get(ticker, 0.0)
+                    alloc_l1 = min(math.floor(exact_l1), rem_qty_total)
+                    self.residual["SELL_L1"][ticker] = exact_l1 - alloc_l1
+                    if alloc_l1 > 0:
+                        orders.append({"side": "SELL", "qty": alloc_l1, "price": trigger_l1})
+                        rem_qty_total -= alloc_l1
+
+                # B. 상위층 루프
+                if upper_qty > 0 and trigger_upper > 0 and curr_p >= trigger_upper and rem_qty_total > 0:
+                    exact_upper = (upper_qty * slice_ratio_sell) + self.residual["SELL_UPPER"].get(ticker, 0.0)
+                    alloc_upper = min(math.floor(exact_upper), rem_qty_total)
+                    self.residual["SELL_UPPER"][ticker] = exact_upper - alloc_upper
+                    if alloc_upper > 0:
+                        orders.append({"side": "SELL", "qty": alloc_upper, "price": trigger_upper})
 
         return {"orders": orders, "trigger_loc": False}
-
-    def get_emergency_liquidation_qty(self, alloc_cash, available_cash, q_data):
-        total_q = sum(item.get("qty", 0) for item in q_data)
-        
-        if total_q > 0 and available_cash < (alloc_cash / 2.0):
-            if q_data:
-                return q_data[-1].get('qty', 0)
-        return 0
