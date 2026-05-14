@@ -1,33 +1,43 @@
 # ==========================================================
-# [scheduler_core.py] - 🌟 100% 통합 완성본 🌟
-# ⚠️ 이 주석 및 파일명 표기는 절대 지우지 마세요.
-# 💡 [V24.09 패치] API 결측치(None) 방어용 Safe Casting 전면 이식 완료
-# 💡 [V24.10 수술] V_REV 동적 에스크로 차감 방어 (이중 차감 방지)
-# 🚨 [V25.02 수술] 리버스 모드 일일 1회 확정 탈출(TQQQ -15% / SOXL -20%) 엔진 팩트 이식
-# 🚨 [V25.19 핫픽스] 자정(Midnight) 래핑(Wrap-around) 시간 오차 수학적 교정
-# 🚨 [V25.19 핫픽스] 리버스 확정 탈출 시 무조건 누적(increment)되던 데드코드 분리 차단
+# FILE: scheduler_core.py
+# ==========================================================
+# 🚨 [AI 에이전트(Copilot/Claude) 절대 주의 - 환각(Hallucination) 방어막]
+# 제1헌법: 파일 I/O 및 달력 API(mcal)는 무조건 asyncio.to_thread로 래핑하여 이벤트 루프 교착(Deadlock)을 원천 차단함.
+# 제3헌법: KST 타임존 및 is_dst 기반의 동적 스케줄링 전면 소각. 
+# MODIFIED: [V44.47 KST 타임 패러독스 영구 소각] 서머타임 분기 함수 통합 및 EST 절대 시간 기반으로 100% 디커플링 락온 완료.
+# NEW: [콜드 스타트 런타임 붕괴 방어] scheduled_auto_sync 내부 tx_lock None 가드 이식.
+# NEW: [전역 타임아웃 이식] scheduled_force_reset 이벤트 루프 교착 방어 타임아웃 래퍼 적용.
+# 🚨 MODIFIED: [V72.21 휴장일 맹독성 페일 오픈(Fail-Open) 팩트 교정]
+# - 달력 API가 정상적으로 빈 데이터를 반환한 것은 휴장일이므로 페일 오픈을 쏘지 않고 정상적으로 False(휴장)를 반환하도록 로직 전면 수술 완료.
+# - 통신 예외(Exception) 발생 시에만 평일 강제 개장으로 폴백하도록 방어막 정상화.
+# 🚨 MODIFIED: [V-REV SSOT 팩트 교정] scheduled_force_reset 내 낡은 is_active 의존성 영구 소각 및 version 락온.
+# 🚨 MODIFIED: [V72.01 V-REV 예산 뻥튀기(Double Spending) 맹점 100% 소각]
+# - 기존 spent를 파일 I/O로 파싱하여 이중 차감하고 free_cash를 더하던 데드코드를 영구 적출.
+# - 코어 엔진 내부에서 자체 잔차를 연산하므로, 오직 순수 1회 예산(15%)만 주입하여
+#   0.5회분씩 2건의 지정가 VWAP 주문이 정확히 분할 타격되도록 락온.
+# 🚨 MODIFIED: [V73.10 확정 정산 16:05 EST 전진 배치 및 시각적 디커플링 해체]
+# - scheduled_auto_sync 코루틴 내부의 시스템 로깅 및 텔레그램 상태 알림 메시지에 
+#   하드코딩된 21:00 EST 텍스트를 16:05 EST로 일괄 오버라이드 완료.
 # ==========================================================
 import os
 import logging
 import datetime
-import pytz
 import time
 import math
 import asyncio
 import glob
 import random
 import pandas_market_calendars as mcal
+import json
+import tempfile
+from zoneinfo import ZoneInfo
 
-def is_dst_active():
-    est = pytz.timezone('US/Eastern')
-    return datetime.datetime.now(est).dst() != datetime.timedelta(0)
-
-def get_target_hour():
-    return (17, "🌞 서머타임 적용(여름)") if is_dst_active() else (18, "❄️ 서머타임 해제(겨울)")
-
+# 🚨 [AI 에이전트 절대 주의]
+# 이 함수는 동기(Synchronous) 블로킹 함수입니다. 비동기 루프 내에서 직접 호출하면 전체 스케줄러가 교착(Deadlock)되어 증발합니다. 
+# 반드시 호출부에서 await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0) 패턴으로 래핑하세요.
 def is_market_open():
     try:
-        est = pytz.timezone('US/Eastern')
+        est = ZoneInfo('America/New_York')
         today = datetime.datetime.now(est)
         if today.weekday() >= 5: 
             return False
@@ -35,64 +45,72 @@ def is_market_open():
         nyse = mcal.get_calendar('NYSE')
         schedule = nyse.schedule(start_date=today.date(), end_date=today.date())
         
+        # 🚨 MODIFIED: [V72.21 휴장일 맹독성 페일 오픈(Fail-Open) 팩트 교정]
         if not schedule.empty:
             return True
         else:
+            logging.info("💤 [is_market_open] 달력 API 빈 데이터 반환. 금일은 미국 증시 휴장일입니다.")
             return False
     except Exception as e:
-        logging.error(f"⚠️ 달력 라이브러리 에러 발생. 평일이므로 강제 개장 처리합니다: {e}")
-        return True
+        logging.error(f"⚠️ 달력 라이브러 에러 발생. 스케줄 증발 방어를 위해 평일 강제 개장(Fail-Open) 처리합니다: {e}")
+        est = ZoneInfo('America/New_York')
+        return datetime.datetime.now(est).weekday() < 5
 
 def get_budget_allocation(cash, tickers, cfg):
     sorted_tickers = sorted(tickers, key=lambda x: 0 if x == "SOXL" else (1 if x == "TQQQ" else 2))
     allocated = {}
     
-    # 💡 [핵심 수술] API 결측치(None) 방어 및 순수 가용 예산(Free Cash) 도출
     safe_cash = float(cash) if cash is not None else 0.0
     
-    # 💡 [V24.10 수술] 동적 에스크로 락다운 (예산 이중 차감 방어)
     dynamic_total_locked = 0.0
+    vrev_virtual_escrow = 0.0 
+    
     for tx in tickers:
         rev_state = cfg.get_reverse_state(tx)
         if rev_state.get("is_active", False):
-            # KIS 계좌에 LOC 지정가 등으로 묶였는지(Flag) 확인. getattr 방어.
             is_locked = getattr(cfg, 'get_order_locked', lambda x: False)(tx)
             if not is_locked:
-                # 주문이 안 들어간 경우에만 방어를 위해 봇 내부 차감 실행
                 dynamic_total_locked += float(cfg.get_escrow_cash(tx) or 0.0)
+        
+        if cfg.get_version(tx) == "V_REV":
+            vrev_virtual_escrow += float(cfg.get_seed(tx) or 0.0) * 0.15
 
-    free_cash = max(0.0, safe_cash - dynamic_total_locked)
+    free_cash = max(0.0, safe_cash - dynamic_total_locked - vrev_virtual_escrow)
     
     for tx in sorted_tickers:
+        version = getattr(cfg, 'get_version', lambda x: "V14")(tx)
         rev_state = cfg.get_reverse_state(tx)
         is_rev = rev_state.get("is_active", False)
         
-        # 본인 종목을 제외한 타 종목의 동적 잠금 예산 역산 앵커링
-        other_locked = dynamic_total_locked
-        if is_rev:
-            is_locked = getattr(cfg, 'get_order_locked', lambda x: False)(tx)
-            if not is_locked:
-                other_locked -= float(cfg.get_escrow_cash(tx) or 0.0)
-        
-        if is_rev:
-            # 💡 [핵심 수술] 리버스 모드 종목은 공유 예산(rem_cash) 탈취를 금지하고 오직 자신의 에스크로만 락온
-            my_escrow = float(cfg.get_escrow_cash(tx) or 0.0)
-            allocated[tx] = my_escrow + other_locked
+        if version == "V_REV":
+            rev_daily_budget = float(cfg.get_seed(tx) or 0.0) * 0.15
+            # 🚨 MODIFIED: [V72.01 V-REV 예산 뻥튀기(Double Spending) 맹점 100% 소각]
+            allocated[tx] = rev_daily_budget
         else:
-            split = int(cfg.get_split_count(tx) or 0)
-            seed = float(cfg.get_seed(tx) or 0.0)
-            portion = seed / split if split > 0 else 0.0
+            other_locked = dynamic_total_locked
+            if is_rev:
+                is_locked = getattr(cfg, 'get_order_locked', lambda x: False)(tx)
+                if not is_locked:
+                    other_locked -= float(cfg.get_escrow_cash(tx) or 0.0)
             
-            if free_cash >= portion:
-                allocated[tx] = free_cash + other_locked
-                free_cash -= portion
-            else: 
-                allocated[tx] = other_locked
+            if is_rev:
+                my_escrow = float(cfg.get_escrow_cash(tx) or 0.0)
+                allocated[tx] = my_escrow + other_locked
+            else:
+                split = int(cfg.get_split_count(tx) or 0)
+                seed = float(cfg.get_seed(tx) or 0.0)
+                portion = seed / split if split > 0 else 0.0
                 
+                if free_cash >= portion:
+                    allocated[tx] = free_cash
+                    free_cash -= portion
+                else: 
+                    allocated[tx] = 0.0
+        
     return sorted_tickers, allocated
 
 def get_actual_execution_price(execs, target_qty, side_cd):
-    if not execs: return 0.0
+    if not execs or target_qty <= 0: return 0.0
     
     execs.sort(key=lambda x: str(x.get('ord_tmd') or '000000'), reverse=True)
     matched_qty = 0
@@ -113,7 +131,7 @@ def get_actual_execution_price(execs, target_qty, side_cd):
                 break
     
     if matched_qty > 0:
-        return math.floor((total_amt / matched_qty) * 100) / 100.0
+        return round(total_amt / matched_qty, 2)
     return 0.0
 
 def perform_self_cleaning():
@@ -131,7 +149,13 @@ def perform_self_cleaning():
             if os.path.isfile(f) and os.stat(f).st_mtime < now - seven_days:
                 try: os.remove(f)
                 except: pass
-                
+   
+        for prefix in ["daily_snapshot_*", "vwap_state_*"]:
+            for f in glob.glob(f"data/{prefix}.json"):
+                if os.path.isfile(f) and os.stat(f).st_mtime < now - seven_days:
+                    try: os.remove(f)
+                    except: pass
+   
         for directory in ["data", "logs"]:
             for f in glob.glob(f"{directory}/tmp*"):
                 if os.path.isfile(f) and os.stat(f).st_mtime < now - one_day:
@@ -149,121 +173,169 @@ async def scheduled_token_check(context):
     logging.info(f"🔑 [API 토큰 갱신] 서버 동시 접속 부하 방지를 위해 {jitter_seconds}초 대기 후 발급을 시작합니다.")
     await asyncio.sleep(jitter_seconds)
     
-    # 💡 [수술 완료] 오타(tothread) 교정
     await asyncio.to_thread(context.job.data['broker']._get_access_token, force=True)
     logging.info("🔑 [API 토큰 갱신] 토큰 갱신이 안전하게 완료되었습니다.")
 
-# ==========================================================
-# 🚨 [V25.02 핵심 수술] 리버스 모드 절대 하드스탑(TQQQ -15% / SOXL -20%) 확정 탈출 엔진 이식
-# 💡 가변 변수(exit_target) 의존성 100% 적출 및 타임 패러독스 원천 차단
-# ==========================================================
-
 async def scheduled_force_reset(context):
-    kst = pytz.timezone('Asia/Seoul')
-    now = datetime.datetime.now(kst)
-    target_hour, _ = get_target_hour()
+    # 🚨 [EST 절대 시간 락온] 타임 패러독스 방어
+    est = ZoneInfo('America/New_York')
+    now_est = datetime.datetime.now(est)
     
-    now_minutes = now.hour * 60 + now.minute
-    target_minutes = target_hour * 60
-    
-    # MODIFIED: [V25.19 핫픽스] 자정 래핑(Wrap-around) 오차 수학적 교정 (High 4)
-    diff = min((now_minutes - target_minutes) % 1440, (target_minutes - now_minutes) % 1440)
-    if diff > 2:
+    # 04:00 EST 실행 시간 이탈 여부 검증 (Jitter 방어)
+    if not (3 <= now_est.hour <= 5):
         return
+
+    async def _do_force_reset():
+        try:
+            is_open = await asyncio.wait_for(asyncio.to_thread(is_market_open), timeout=10.0)
+        except asyncio.TimeoutError:
+            logging.error("⚠️ [force_reset] is_market_open 달력 API 타임아웃. 평일 강제 개장 처리합니다.")
+            is_open = now_est.weekday() < 5
+
+        if not is_open:
+            await context.bot.send_message(chat_id=context.job.chat_id, text="⛔ <b>오늘은 미국 증시 휴장일입니다. 금일 시스템 매매 잠금 해제 및 정규장 주문 스케줄을 모두 건너뜁니다.</b>", parse_mode='HTML')
+            return
         
-    if not is_market_open():
-        await context.bot.send_message(chat_id=context.job.chat_id, text="⛔ <b>오늘은 미국 증시 휴장일입니다. 금일 시스템 매매 잠금 해제 및 정규장 주문 스케줄을 모두 건너뜁니다.</b>", parse_mode='HTML')
-        return
-    
-    try:
-        app_data = context.job.data
-        cfg = app_data['cfg']
-        broker = app_data['broker']
-        tx_lock = app_data['tx_lock']
-        chat_id = context.job.chat_id
-        
-        cfg.reset_locks()
-        
-        # 💡 [V24.10 수술] 17:00 매매 스케줄러 초기화 시 주문 상태 플래그 전면 해제
-        for t in cfg.get_active_tickers():
-            if hasattr(cfg, 'set_order_locked'):
-                cfg.set_order_locked(t, False)
-        
-        async with tx_lock:
-            _, holdings = broker.get_account_balance()
+        try:
+            app_data = context.job.data
+            cfg = app_data['cfg']
             
-        if holdings is None:
-            holdings = {}
+            await asyncio.to_thread(cfg.reset_locks)
             
-        msg_addons = ""
-        
-        for t in cfg.get_active_tickers():
-            rev_state = cfg.get_reverse_state(t)
-            
-            if rev_state.get("is_active"):
-                # 💡 [핵심 수술] holdings 객체 내부 키 누락 및 None 캐스팅 방어
-                h_data = holdings.get(t) or {}
-                actual_avg = float(h_data.get('avg') or 0.0)
+            broker = app_data['broker']
+            tx_lock = app_data['tx_lock']
+            chat_id = context.job.chat_id
+             
+            if tx_lock is None:
+                logging.warning("⚠️ [force_reset] tx_lock 미초기화. 이번 사이클 스킵.")
+                try:
+                    await context.bot.send_message(chat_id=chat_id, text="⚠️ <b>[시스템 경고]</b> tx_lock 미초기화로 초기화 스케줄을 1회 스킵합니다.", parse_mode='HTML')
+                except Exception:
+                    pass
+                return
+             
+            async with tx_lock:
+                _, holdings = await asyncio.to_thread(broker.get_account_balance)
                 
-                curr_p = await asyncio.to_thread(broker.get_current_price, t)
-                curr_p = float(curr_p or 0.0)
+            if holdings is None:
+                holdings = {}
                 
-                if curr_p > 0 and actual_avg > 0:
-                    curr_ret = (curr_p - actual_avg) / actual_avg * 100.0
+            msg_addons = ""
+            
+            active_tickers = await asyncio.to_thread(cfg.get_active_tickers)
+            for t in active_tickers:
+                version = await asyncio.to_thread(cfg.get_version, t)
+                rev_state = await asyncio.to_thread(cfg.get_reverse_state, t)
+                
+                if version == "V_REV":
+                    actual_avg = float(holdings.get(t, {'avg': 0})['avg'])
                     
-                    # 🚨 [V25.02 핵심 수술] 가변 exit_target 의존성 100% 적출 및 절대 하드스탑 팩트 이식
-                    exit_threshold = -15.0 if t == "TQQQ" else -20.0
+                    try:
+                        curr_p_val = await asyncio.wait_for(
+                             asyncio.to_thread(broker.get_current_price, t),
+                             timeout=10.0
+                        )
+                        curr_p = float(curr_p_val or 0.0)
+                    except asyncio.TimeoutError:
+                        logging.error(f"⚠️ [{t}] 현재가 조회 타임아웃 (10초). 0.0으로 폴백합니다.")
+                        curr_p = 0.0
+                    except Exception as e:
+                        logging.error(f"⚠️ [{t}] 현재가 조회 실패: {e}")
+                        curr_p = 0.0
                     
-                    if curr_ret >= exit_threshold:
-                        cfg.set_reverse_state(t, False, 0, 0.0)
-                        cfg.clear_escrow_cash(t)
+                    if curr_p > 0 and actual_avg > 0:
+                        curr_ret = (curr_p - actual_avg) / actual_avg * 100.0
+                        exit_target = rev_state.get("exit_target", 0.0)
                         
-                        ledger_data = cfg.get_ledger()
-                        changed = False
-                        for lr in ledger_data:
-                            if lr.get('ticker') == t and lr.get('is_reverse', False):
-                                lr['is_reverse'] = False
-                                changed = True
-                        if changed:
-                            cfg._save_json(cfg.FILES["LEDGER"], ledger_data)
+                        if curr_ret >= exit_target:
+                            await asyncio.to_thread(cfg.set_reverse_state, t, True, 0, 0.0)
+                            await asyncio.to_thread(cfg.clear_escrow_cash, t)
                             
-                        msg_addons += f"\n🌤️ <b>[{t}] 리버스 확정 탈출 조건 달성 (수익률: {curr_ret:.2f}% >= 기준: {exit_threshold}%)!</b>\n▫️ 격리 병동을 즉시 폐쇄하고 V14 본대로 완벽히 복귀했습니다."
-                    # MODIFIED: [V25.19 핫픽스] 탈출 성공 시 무조건 누적되던 데드코드 방어 (High 5)
-                    else:
-                        cfg.increment_reverse_day(t)
+                            ledger_data = await asyncio.to_thread(cfg.get_ledger)
+                            changed = False
+                            for lr in ledger_data:
+                                if lr.get('ticker') == t and lr.get('is_reverse', False):
+                                    lr['is_reverse'] = False
+                                    changed = True
+                            if changed:
+                                await asyncio.to_thread(cfg._save_json, cfg.FILES["LEDGER"], ledger_data)
+                             
+                            msg_addons += f"\n🌤️ <b>[{t}] 리버스 목표 달성({curr_ret:.2f}%)!</b> 격리 병동 졸업 및 Escrow 해제 완료!"
+                        else:
+                            await asyncio.to_thread(cfg.increment_reverse_day, t)
                 else:
-                    cfg.increment_reverse_day(t)
-            else:
-                cfg.increment_reverse_day(t)
-                
-        final_msg = f"🔓 <b>[{target_hour}:00] 시스템 일일 초기화 완료 (매매 잠금 해제 & 팩트 스캔)</b>" + msg_addons
-        await context.bot.send_message(chat_id=chat_id, text=final_msg, parse_mode='HTML')
-        
+                    await asyncio.to_thread(cfg.increment_reverse_day, t)
+                    
+            final_msg = f"🔓 <b>[04:00 EST] 시스템 일일 초기화 완료 (매매 잠금 해제 & 고점 관측 센서 가동)</b>" + msg_addons
+            await context.bot.send_message(chat_id=chat_id, text=final_msg, parse_mode='HTML')
+            
+        except Exception as e:
+            await context.bot.send_message(chat_id=context.job.chat_id, text=f"🚨 <b>시스템 초기화 중 에러 발생:</b> {e}", parse_mode='HTML')
+
+    try:
+        await asyncio.wait_for(_do_force_reset(), timeout=180.0)
     except Exception as e:
-        await context.bot.send_message(chat_id=context.job.chat_id, text=f"🚨 <b>시스템 초기화 중 에러 발생:</b> {e}", parse_mode='HTML')
+         logging.error(f"🚨 [force_reset] 전역 타임아웃(180초) 또는 런타임 붕괴 발생: {e}")
 
-async def scheduled_auto_sync_summer(context):
-    if not is_dst_active(): return 
-    await run_auto_sync(context, "08:30")
+# 🚨 [V73.10 확정 정산 16:05 EST 전진 배치 팩트 교정]
+async def scheduled_auto_sync(context):
+    logging.info("✅ [확정 정산] 16:05 EST 팩트 기반 확정 정산 엔진 다이렉트 가동")
 
-async def scheduled_auto_sync_winter(context):
-    if is_dst_active(): return 
-    await run_auto_sync(context, "09:30")
+    if context.job.data.get('tx_lock') is None:
+        logging.warning("⚠️ [auto_sync] tx_lock 미초기화. 장부 표시 스킵.")
+        return
+    
+    def _check_and_set_lock():
+        est_tz = ZoneInfo('America/New_York')
+        today_est = datetime.datetime.now(est_tz).strftime("%Y-%m-%d")
+        lock_file = "data/sync_lock.json"
+        os.makedirs("data", exist_ok=True)
 
-async def run_auto_sync(context, time_str):
+        try:
+            if os.path.exists(lock_file):
+                with open(lock_file, "r") as f:
+                    lock_data = json.load(f)
+                    if lock_data.get("last_sync") == today_est:
+                        return False, today_est
+        except Exception:
+            pass
+
+        try:
+            fd, tmp_path = tempfile.mkstemp(dir="data", text=True)
+            with os.fdopen(fd, 'w') as f:
+                json.dump({"last_sync": today_est}, f)
+                # MODIFIED: [제4헌법 원자적 쓰기 무결성 락온] flush 및 fsync 추가
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, lock_file)
+        except Exception as e:
+            logging.error(f"🚨 동기화 락온 파일 저장 실패: {e}")
+
+        return True, today_est
+
+    # 🚨 [비동기 래핑] 파일 I/O 락 점유 원천 차단
+    can_run, today_est = await asyncio.to_thread(_check_and_set_lock)
+    
+    if not can_run:
+        logging.info(f"⏳ [정산 멱등성 락온] 오늘({today_est} EST)의 16:05 확정 정산이 이미 완료되었습니다. 중복 실행 및 다중 렌더링을 100% 차단합니다.")
+        return
+
     chat_id = context.job.chat_id
     bot = context.job.data['bot']
-    status_msg = await context.bot.send_message(chat_id=chat_id, text=f"📝 <b>[{time_str}] 장부 자동 동기화(무결성 검증)를 시작합니다.</b>", parse_mode='HTML')
+    status_msg = await context.bot.send_message(chat_id=chat_id, text=f"📝 <b>[16:05 EST] 장부 자동 동기화(무결성 검증)를 시작합니다.</b>", parse_mode='HTML')
     
     success_tickers = []
-    for t in context.job.data['cfg'].get_active_tickers():
-        res = await bot.process_auto_sync(t, chat_id, context, silent_ledger=True)
+    active_tickers = await asyncio.to_thread(context.job.data['cfg'].get_active_tickers)
+    for t in active_tickers:
+         # MODIFIED: [제2헌법 라우팅 누수 런타임 붕괴 방어] sync_engine 호출로 팩트 교정
+        res = await bot.sync_engine.process_auto_sync(t, chat_id, context, silent_ledger=True)
         if res == "SUCCESS":
             success_tickers.append(t)
             
     if success_tickers:
         async with context.job.data['tx_lock']:
-            _, holdings = context.job.data['broker'].get_account_balance()
-        await bot._display_ledger(success_tickers[0], chat_id, context, message_obj=status_msg, pre_fetched_holdings=holdings)
+            _, holdings = await asyncio.to_thread(context.job.data['broker'].get_account_balance)
+        # MODIFIED: [제2헌법 라우팅 누수 런타임 붕괴 방어] sync_engine 호출로 팩트 교정
+        await bot.sync_engine._display_ledger(success_tickers[0], chat_id, context, message_obj=status_msg, pre_fetched_holdings=holdings)
     else:
-        await status_msg.edit_text(f"📝 <b>[{time_str}] 장부 동기화 완료</b> (표시할 진행 중인 장부가 없습니다)", parse_mode='HTML')
+        await status_msg.edit_text(f"📝 <b>[16:05 EST] 장부 동기화 완료</b> (표시할 진행 중인 장부가 없습니다)", parse_mode='HTML')
