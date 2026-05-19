@@ -12,7 +12,7 @@
 # MODIFIED: [V46.03 예산 침범 패러독스 방어] KIS 증거금 룰에 의해 AVWAP이 본대 예산을 침범하는 것을 막기 위해 1.05배 하드 마진 락온 이식
 # MODIFIED: [V46.04 AVWAP 증거금 침식 방어] 15:27 해제 조건 소각 및 마진 1.20배 상향 락온
 # MODIFIED: [V46.05 YF API 무한 호출 병목 소각 및 타임아웃 연장] Lock Starvation 방어
-# MODIFIED: [V46.06 기초자산 고/저가 스캔 배선 팩트 개통] 단판 승부 파라미터 누수 수술
+# MODIFIED: [V46.06 기초자산 고/저가 스캔 배선 팩트 개통] 단판 승부 파라 파라미터 누수 수술
 # MODIFIED: [V47.00 AVWAP 오버나이트 홀딩 락온] 일일 누적 매수/매도량 팩트 수혈 파이프라인 이식 (디커플링 대비)
 # MODIFIED: [V47.00 하이킨아시 듀얼 모멘텀] 본대 예산 보호막 무력화 0.0 및 암살자 예산 50% 강제 락온
 # MODIFIED: [V47.00 하이킨아시 듀얼 모멘텀] 옴니 매트릭스 락다운 블록 바이패스 처리(04:00 EST 개방)
@@ -38,15 +38,11 @@
 # 🚨 NEW: [V7.4 Assassin Lock-on] 전투 사령부 엑시트 파이프라인 팩트 교정
 # 🚨 MODIFIED: [V76.01 ATR5 동적 하드스탑 렌더링 영구 소각 및 투트랙 엑시트 UI 동기화]
 # 🚨 NEW: [V77.00 V7.1 백테스트 절대 동기화 롤백]
-# - ATR5 의존성을 철거하고 순수 진폭(Amp) 5일 이동평균인 amp5를 코어 엔진에 주입하도록 배선 교체.
-# - 수수료 보전 타점 공식을 100% 소각하고 순수 1.02 고정 곱연산으로 전면 롤백 완료.
 # 🚨 MODIFIED: [V77.01 데이터 기아 방어 및 런타임 무결성 팩트 수술]
-# - get_avwap_decision 호출부 파라미터에 df_1min_exec=df_1min_t를 명시적으로 주입하여 1분봉 팩트 데이터 다이렉트 수혈.
-# - AVWAP 딥매수 성공 후 메시지 렌더링 블록 및 미체결 스캔 블록의 IndentationError(들여쓰기) 붕괴 전면 팩트 교정
 # 🚨 NEW: [V77.02 프리마켓 관제탑 데이터 기아 및 런타임 붕괴 완벽 수술]
-# - 상태 캐시 영속화(Persistence) 동기화: 코어 엔진에서 반환된 pm_locked 상태를 tracking_cache 및 avwap_state_dict에 100% 팩트 결속.
-# - 기억 상실(Amnesia) 방어: 서버 재부팅 및 런타임 갱신 시 09:25 타겟 락온이 휘발되는 하극상 엣지 케이스를 원자적 저장망(save_state)으로 원천 차단.
-# - 다이렉트 팩트 수혈 파이프라인 개통: decision 딕셔너리에서 PM_H, PM_L, T_H, T_L, offset 파라미터를 추출하여 런타임 캐시에 무결점 병합 락온 완료.
+# 🚨 NEW: [V77.04 Operation Dawn Sniper - 프리장 선제 타격 롤백]
+# 🚨 MODIFIED: [V77.05 데드코드 영구 소각] pm_locked 잔존 뇌관 100% 적출 완비 (제2 절대 헌법 사수)
+# 🚨 MODIFIED: [V77.06 3.0% 한계 돌파 팩트 롤백] 투트랙 엑시트 익절 덫 장전 2.0% -> 3.0% 전면 상향 동기화
 # ==========================================================
 import logging
 import datetime
@@ -106,7 +102,7 @@ async def scheduled_sniper_monitor(context):
         else: return
     
     pre_start = market_open - datetime.timedelta(hours=5, minutes=30)
-    start_monitor = pre_start + datetime.timedelta(minutes=1)
+    start_monitor = pre_start 
     end_monitor = market_close - datetime.timedelta(minutes=1)
     
     if not (start_monitor <= now_est <= end_monitor):
@@ -195,6 +191,7 @@ async def scheduled_sniper_monitor(context):
                             if saved_state:
                                 tracking_cache[f"AVWAP_BOUGHT_{t}"] = saved_state.get('bought', False)
                                 tracking_cache[f"AVWAP_SHUTDOWN_{t}"] = saved_state.get('shutdown', False)
+                                tracking_cache[f"AVWAP_EXECUTED_BUY_{t}"] = saved_state.get('executed_buy', False)
                                 tracking_cache[f"AVWAP_QTY_{t}"] = saved_state.get('qty', 0)
                                 tracking_cache[f"AVWAP_AVG_{t}"] = saved_state.get('avg_price', 0.0)
                                 tracking_cache[f"AVWAP_STRIKES_{t}"] = saved_state.get('strikes', 0)
@@ -202,15 +199,11 @@ async def scheduled_sniper_monitor(context):
                                 tracking_cache[f"AVWAP_DAILY_SOLD_{t}"] = saved_state.get('daily_sold_qty', 0)
                                 tracking_cache[f"AVWAP_TRAP_ODNO_{t}"] = saved_state.get('trap_odno', "")
                                 
-                                # NEW: [V7.4 Assassin Lock-on] State Restoration
                                 tracking_cache[f"AVWAP_PM_H_{t}"] = saved_state.get('PM_H', 0.0)
                                 tracking_cache[f"AVWAP_PM_L_{t}"] = saved_state.get('PM_L', 0.0)
                                 tracking_cache[f"AVWAP_T_H_{t}"] = saved_state.get('T_H', 0.0)
                                 tracking_cache[f"AVWAP_T_L_{t}"] = saved_state.get('T_L', 0.0)
                                 tracking_cache[f"AVWAP_OFFSET_{t}"] = saved_state.get('offset', 0.0)
-                                
-                                # 🚨 NEW: [V77.02 상태 캐시 영속화(Persistence) 동기화]
-                                tracking_cache[f"AVWAP_PM_LOCKED_{t}"] = saved_state.get('pm_locked', False)
                                 
                                 tracking_cache[f"AVWAP_WHIPSAW_MODE_{t}"] = saved_state.get('whipsaw_mode', False)
                                 tracking_cache[f"AVWAP_WHIPSAW_ARMED_{t}"] = saved_state.get('whipsaw_armed', False)
@@ -320,10 +313,10 @@ async def scheduled_sniper_monitor(context):
                     except Exception as e:
                         logging.debug(f"AVWAP 파라미터 병렬 스캔 실패: {e}")
                   
-                    # 🚨 NEW: [V77.02 pm_locked 상태 캐시 결속]
                     avwap_state_dict = {
                         "strikes": tracking_cache.get(f"AVWAP_STRIKES_{t}", 0),
                         "shutdown": tracking_cache.get(f"AVWAP_SHUTDOWN_{t}", False),
+                        "executed_buy": tracking_cache.get(f"AVWAP_EXECUTED_BUY_{t}", False),
                         "qty": tracking_cache.get(f"AVWAP_QTY_{t}", 0),
                         "avg_price": tracking_cache.get(f"AVWAP_AVG_{t}", 0.0),
                         "bought": tracking_cache.get(f"AVWAP_BOUGHT_{t}", False),
@@ -335,14 +328,12 @@ async def scheduled_sniper_monitor(context):
                         "T_H": tracking_cache.get(f"AVWAP_T_H_{t}", 0.0),
                         "T_L": tracking_cache.get(f"AVWAP_T_L_{t}", 0.0),
                         "offset": tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0),
-                        "pm_locked": tracking_cache.get(f"AVWAP_PM_LOCKED_{t}", False),
                         "whipsaw_mode": tracking_cache.get(f"AVWAP_WHIPSAW_MODE_{t}", False),
                         "whipsaw_armed": tracking_cache.get(f"AVWAP_WHIPSAW_ARMED_{t}", False),
                         "whipsaw_checked": tracking_cache.get(f"AVWAP_WHIPSAW_CHECKED_{t}", False),
                         "dump_jitter_sec": tracking_cache.get(f"AVWAP_DUMP_JITTER_{t}", 0)
                     }
              
-                    # 🚨 MODIFIED: [V77.01 데이터 기아 방어 및 런타임 무결성 팩트 수술] df_1min_exec 다이렉트 수혈 락온
                     decision = await asyncio.to_thread(
                         strategy.get_avwap_decision,
                         base_ticker=target_base, exec_ticker=t, base_curr_p=base_curr_p,
@@ -357,13 +348,11 @@ async def scheduled_sniper_monitor(context):
                     action = decision.get("action")
                     reason = decision.get("reason", "")
                     
-                    # 🚨 NEW: [V77.02 다이렉트 패스 페이로드 수신 및 락온 캐시 오버라이드]
                     tracking_cache[f"AVWAP_PM_H_{t}"] = decision.get("PM_H", tracking_cache.get(f"AVWAP_PM_H_{t}", 0.0))
                     tracking_cache[f"AVWAP_PM_L_{t}"] = decision.get("PM_L", tracking_cache.get(f"AVWAP_PM_L_{t}", 0.0))
                     tracking_cache[f"AVWAP_T_H_{t}"] = decision.get("T_H", tracking_cache.get(f"AVWAP_T_H_{t}", 0.0))
                     tracking_cache[f"AVWAP_T_L_{t}"] = decision.get("T_L", tracking_cache.get(f"AVWAP_T_L_{t}", 0.0))
                     tracking_cache[f"AVWAP_OFFSET_{t}"] = decision.get("offset", tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0))
-                    tracking_cache[f"AVWAP_PM_LOCKED_{t}"] = decision.get("pm_locked", tracking_cache.get(f"AVWAP_PM_LOCKED_{t}", False))
          
                     if action == "BUY":
                         price = float(decision.get("target_price", decision.get("price", 0.0)))
@@ -386,7 +375,6 @@ async def scheduled_sniper_monitor(context):
                                 await asyncio.sleep(1.0)
                                 continue
  
-                            # 🚨 NEW: [V7.4 Assassin Lock-on] 매도 1호가 직결 타격
                             try:
                                 ask_price_val = await asyncio.wait_for(asyncio.to_thread(broker.get_ask_price, t), timeout=5.0)
                                 ask_price = float(ask_price_val or 0.0)
@@ -424,7 +412,7 @@ async def scheduled_sniper_monitor(context):
                                 if ccld_qty > 0:
                                     avwap_free_cash -= (ccld_qty * price)
                                     
-                                    msg = f"⚔️ <b>[AVWAP] 암살자 V7.1 딥매수 타격 성공!</b>\n▫️ 타겟: {t}\n▫️ 타점: ${exec_price:.2f}\n▫️ 팩트 체결수량: {ccld_qty}주 (목표 {qty}주)\n▫️ 사유: {reason}"
+                                    msg = f"⚔️ <b>[AVWAP] Dawn Sniper 선제 타격 명중!</b>\n▫️ 타겟: {t}\n▫️ 타점: ${exec_price:.2f}\n▫️ 팩트 체결수량: {ccld_qty}주 (목표 {qty}주)\n▫️ 사유: {reason}"
                                     if ccld_qty < qty:
                                         msg += f"\n▫️ 미체결 {qty - ccld_qty}주는 안전을 위해 즉각 취소(Nuke)되었습니다."
                                         
@@ -437,26 +425,28 @@ async def scheduled_sniper_monitor(context):
                                     tracking_cache[f"AVWAP_DAILY_BOUGHT_{t}"] = daily_b
                                     tracking_cache[f"AVWAP_BOUGHT_{t}"] = True
                                     tracking_cache[f"AVWAP_SHUTDOWN_{t}"] = False
+                                    tracking_cache[f"AVWAP_EXECUTED_BUY_{t}"] = True
                                     tracking_cache[f"AVWAP_QTY_{t}"] = new_qty
                                     tracking_cache[f"AVWAP_AVG_{t}"] = round(new_avg, 4)
                 
-                                    trap_price = round(new_avg * 1.02, 2)
+                                    # 🚨 MODIFIED: [V77.06] 3.0% 한계 돌파 익절 덫 장전 팩트 동기화
+                                    trap_price = round(new_avg * 1.03, 2)
                                     trap_res = await asyncio.to_thread(broker.send_order, t, "SELL", ccld_qty, trap_price, "LIMIT")
                                     trap_odno = trap_res.get('odno', '') if isinstance(trap_res, dict) else ''
                      
                                     if trap_res and trap_res.get('rt_cd') == '0' and trap_odno:
                                         tracking_cache[f"AVWAP_TRAP_ODNO_{t}"] = trap_odno
-                                        msg += f"\n\n🎯 <b>[투트랙 엑시트 장전]</b>\n▫️ +2.0% 수익 타점(<b>${trap_price:.2f}</b>)에 익절 덫을 즉시 자동 장전했습니다."
+                                        msg += f"\n\n🎯 <b>[투트랙 엑시트 장전]</b>\n▫️ +3.0% 수익 타점(<b>${trap_price:.2f}</b>)에 익절 덫을 즉시 자동 장전했습니다."
                                     else:
                                         trap_err = trap_res.get('msg1', '오류') if trap_res else '통신 장애'
                                         msg += f"\n\n⚠️ <b>[익절 덫 장전 실패]</b> KIS 서버 거절: {trap_err}"
 
                                     await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
                                     
-                                    # 🚨 NEW: [V77.02 상태 캐시 영속화 동기화] JSON 파일 팩트 결속
                                     state_data = {
                                         "bought": True,
                                         "shutdown": False,
+                                        "executed_buy": True,
                                         "qty": new_qty,
                                         "avg_price": round(new_avg, 4),
                                         "strikes": tracking_cache.get(f"AVWAP_STRIKES_{t}", 0),
@@ -468,7 +458,6 @@ async def scheduled_sniper_monitor(context):
                                         "T_H": tracking_cache.get(f"AVWAP_T_H_{t}", 0.0),
                                         "T_L": tracking_cache.get(f"AVWAP_T_L_{t}", 0.0),
                                         "offset": tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0),
-                                        "pm_locked": tracking_cache.get(f"AVWAP_PM_LOCKED_{t}", False),
                                         "whipsaw_mode": tracking_cache.get(f"AVWAP_WHIPSAW_MODE_{t}", False),
                                         "whipsaw_armed": tracking_cache.get(f"AVWAP_WHIPSAW_ARMED_{t}", False),
                                         "whipsaw_checked": tracking_cache.get(f"AVWAP_WHIPSAW_CHECKED_{t}", False),
@@ -479,7 +468,7 @@ async def scheduled_sniper_monitor(context):
                                 err_msg = res.get('msg1', '응답 없음') if res else '통신 장애'
                                 logging.error(f"🚨 [{t}] AVWAP 딥매수 KIS 서버 거절: {err_msg}")
                                 reject_msg = (
-                                    f"🚨 <b>[{t}] AVWAP 딥매수 서버 거절 (Reject)!</b>\n"
+                                    f"🚨 <b>[{t}] Dawn Sniper 매수 서버 거절 (Reject)!</b>\n"
                                     f"▫️ 엔진이 딥매수를 격발했으나 KIS 서버에서 주문을 거부했습니다.\n"
                                     f"▫️ 사유: <code>{err_msg}</code>\n"
                                     f"▫️ 조치: 다음 1분 사이클에서 재타격을 시도합니다."
@@ -560,7 +549,7 @@ async def scheduled_sniper_monitor(context):
                             total_sold = trap_filled_qty + ccld_qty
                             
                             if total_sold > 0:
-                                msg = f"⚔️ <b>[AVWAP] 암살자 V7.1 엑시트 타격 성공!</b>\n▫️ 타겟: {t}\n▫️ 팩트 체결수량: {total_sold}주 (목표 {qty}주)\n▫️ 사유: {reason}"
+                                msg = f"⚔️ <b>[AVWAP] Dawn Sniper 엑시트 청산 성공!</b>\n▫️ 타겟: {t}\n▫️ 팩트 체결수량: {total_sold}주 (목표 {qty}주)\n▫️ 사유: {reason}"
                                 if ccld_qty < remaining_qty:
                                     msg += f"\n⚠️ 잔량 {remaining_qty - ccld_qty}주 미체결 강제 취소됨."
                                 
@@ -599,10 +588,10 @@ async def scheduled_sniper_monitor(context):
                                 tracking_cache[f"AVWAP_QTY_{t}"] = new_qty
                                 tracking_cache[f"AVWAP_AVG_{t}"] = new_avg
               
-                                # 🚨 NEW: [V77.02 상태 캐시 영속화 동기화] JSON 파일 팩트 결속
                                 state_data = {
                                     'bought': tracking_cache[f"AVWAP_BOUGHT_{t}"],
                                     'shutdown': shutdown_flag,
+                                    'executed_buy': tracking_cache.get(f"AVWAP_EXECUTED_BUY_{t}", False),
                                     'strikes': tracking_cache.get(f"AVWAP_STRIKES_{t}", 0),
                                     'qty': new_qty,
                                     'avg_price': new_avg,
@@ -614,7 +603,6 @@ async def scheduled_sniper_monitor(context):
                                     "T_H": tracking_cache.get(f"AVWAP_T_H_{t}", 0.0),
                                     "T_L": tracking_cache.get(f"AVWAP_T_L_{t}", 0.0),
                                     "offset": tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0),
-                                    "pm_locked": tracking_cache.get(f"AVWAP_PM_LOCKED_{t}", False),
                                     "whipsaw_mode": tracking_cache.get(f"AVWAP_WHIPSAW_MODE_{t}", False),
                                     "whipsaw_armed": tracking_cache.get(f"AVWAP_WHIPSAW_ARMED_{t}", False),
                                     "whipsaw_checked": tracking_cache.get(f"AVWAP_WHIPSAW_CHECKED_{t}", False),
@@ -628,10 +616,10 @@ async def scheduled_sniper_monitor(context):
                         if not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
                             tracking_cache[f"AVWAP_SHUTDOWN_{t}"] = True
                             
-                            # 🚨 NEW: [V77.02 상태 캐시 영속화 동기화] pm_locked 릴레이 결속
                             state_data = {
                                 "bought": tracking_cache.get(f"AVWAP_BOUGHT_{t}", False),
                                 "shutdown": True,
+                                "executed_buy": tracking_cache.get(f"AVWAP_EXECUTED_BUY_{t}", False),
                                 "qty": tracking_cache.get(f"AVWAP_QTY_{t}", 0),
                                 "avg_price": tracking_cache.get(f"AVWAP_AVG_{t}", 0.0),
                                 "strikes": tracking_cache.get(f"AVWAP_STRIKES_{t}", 0),
@@ -643,7 +631,6 @@ async def scheduled_sniper_monitor(context):
                                 "T_H": tracking_cache.get(f"AVWAP_T_H_{t}", 0.0),
                                 "T_L": tracking_cache.get(f"AVWAP_T_L_{t}", 0.0),
                                 "offset": tracking_cache.get(f"AVWAP_OFFSET_{t}", 0.0),
-                                "pm_locked": tracking_cache.get(f"AVWAP_PM_LOCKED_{t}", False),
                                 "whipsaw_mode": tracking_cache.get(f"AVWAP_WHIPSAW_MODE_{t}", False),
                                 "whipsaw_armed": tracking_cache.get(f"AVWAP_WHIPSAW_ARMED_{t}", False),
                                 "whipsaw_checked": tracking_cache.get(f"AVWAP_WHIPSAW_CHECKED_{t}", False),
