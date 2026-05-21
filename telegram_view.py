@@ -1,25 +1,9 @@
 # ==========================================================
 # FILE: telegram_view.py
 # ==========================================================
-# 🚨 NEW: [V73.00 UI 렌더링 디커플링 해체] 
-# - 텔레그램 시작 화면 및 통합 지시서에 잔존하는 17:05 KST 예약 장전 레거시 텍스트를 전면 소각.
-# - 15:26 EST 지연 장전 팩트 교정으로 시각적 환각(UI 디커플링) 100% 해체 완료.
-# 🚨 MODIFIED: [V73.01 시작 화면 타임라인 팩트 동기화 및 직관성 대수술]
-# - EST/KST 혼용 표기로 인한 인지 부조화를 막기 위해 시작 화면의 모든 시간을 KST 기반으로 동적 래핑하여 통일.
-# - 시간순 배열 오류(15:26 EST가 23:20 KST보다 먼저 표출되던 현상)를 연대기 순으로 완벽히 정렬 완료.
-# - 옴니 매트릭스 스캔 시간이 10:00 EST로 전진 배치되었음에도 23:20으로 하드코딩되어 있던 낡은 UI 찌꺼기를 23:00(서머타임) / 00:00(윈터)로 100% 팩트 교정 완료.
-# 🚨 MODIFIED: [V73.10 확정 정산 16:05 EST 전진 배치 및 시각적 디커플링 해체]
-# - 시작 화면의 운영 스케줄에서 10:00 KST 확정 정산 레거시 텍스트를 전면 소각.
-# - 16:05 EST를 서머타임에 맞춰 05:05/06:05 KST로 동적 래핑하고, 연대기 순으로 스케줄 타임라인 완벽 재정렬 완료.
-# 🚨 MODIFIED: [V73.11 시작 화면 텍스트 다이어트 및 가독성 최적화]
-# - 'KST 기준', '익일', '모멘텀' 등 불필요한 텍스트를 소각하여 모바일 1줄 렌더링 락온.
-# - 자전거래 차단 문구를 하단으로 줄바꿈하여 시각적 직관성 극대화 완료.
-# 🚨 MODIFIED: [V73.12 시작 화면 텍스트 다이어트 2차 팩트 교정]
-# - '당일 스냅샷 박제'에서 '당일' 텍스트를 전면 소각하여 가독성을 한층 더 진공 압축 완료.
-# 🚨 MODIFIED: [V73.13 통합 지시서 수동 제어(EXEC/CANCEL) 완벽 스위칭 락온]
-# - is_locked 상태에 따른 버튼 상호 배타적(Mutually Exclusive) 렌더링 적용으로 시각적 디커플링 해체 완료.
-# 🚨 NEW: [V7.4 Assassin Lock-on] 정점 요격(Apex Intercept) 렌더링 및 UI 버튼 전면 영구 소각
-# - /settlement 메뉴에서 오조작을 유발하던 Apex 스위치 버튼 및 렌더링 텍스트를 100% 도려내어 라우팅 오염 차단.
+# 🚨 MODIFIED: [V77.33 엣지케이스 팩트 수술] 통합 지시서 에스크로(Escrow) UI 렌더링 전면 소각
+# 🚨 MODIFIED: [UI 렌더링 무결성] 최신 버전 V77.34 락온
+# 🚨 NEW: [Case 11] 환경설정(/settlement)에 다중 출격(Multi-Sortie) 스위치 동적 렌더링 팩트 교정
 # ==========================================================
 import os
 import math
@@ -77,23 +61,20 @@ class TelegramView:
         est_tz = ZoneInfo('America/New_York')
         is_dst = bool(datetime.datetime.now(est_tz).dst())
         
-        # 🚨 MODIFIED: [V73.10 스케줄 연대기 순 정렬 및 16:05 EST 동적 래핑 락온]
         fact_hour = 17 if is_dst else 18
-        matrix_time = "23:00" if is_dst else "00:00"  # 10:00 EST 팩트 교정
-        trap_time = "04:26" if is_dst else "05:26"    # 15:26 EST 팩트 교정
-        sync_time = "05:05" if is_dst else "06:05"    # 16:05 EST 팩트 교정
+        matrix_time = "23:00" if is_dst else "00:00"  
+        trap_time = "04:26" if is_dst else "05:26"    
+        sync_time = "05:05" if is_dst else "06:05"    
         dst_state = "🌞서머타임 ON" if is_dst else "❄️서머타임 OFF"
         
         msg = f"🌌 [ 옴니 매트릭스 퀀트 엔진 {latest_version} ]\n"
         msg += "💠 무결성 싱글 롱 모멘텀 (SOXL 전용) & V-REV 갭 스위칭\n\n"
         
-        # 🚨 MODIFIED: [V73.11 텍스트 다이어트 팩트 교정]
-        # 🚨 MODIFIED: [V73.12 시작 화면 텍스트 다이어트 2차 팩트 교정] '당일' 텍스트 소각
         msg += f"🕒 [ 운영 스케줄 ({dst_state}) ]\n"
         msg += f"🔹 {fact_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
-        msg += f"🔹 {fact_hour}:05 : 📸 스냅샷 박제 및 모의 장전\n"
+        msg += f"🔹 {fact_hour}:05 : 📸 V14 선제 덫 장전 & V-REV 모의 스냅샷\n"
         msg += f"🔹 {matrix_time} : 🏛️ 옴니 매트릭스 시장 국면 판별\n"
-        msg += f"🔹 {trap_time} : 🌃 본진 덫 KIS 실전 투하\n"
+        msg += f"🔹 {trap_time} : 🌃 V-REV 덫 실전 투하\n"
         msg += "   (자전거래 차단)\n"
         msg += f"🔹 {sync_time} : 📝 확정 정산 스캔 & 졸업 발급\n"
         msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n\n"
@@ -261,7 +242,7 @@ class TelegramView:
         page_items = history_data[start_idx:end_idx]
 
         msg = "🚀 <b>[ PIPIOS 퀀트 엔진 패치노트 ]</b>\n"
-        msg += "▫️ 현재 시스템: <code>V75.01 무결점 디커플링 에디션 (V7.4 Assassin)</code>\n\n"
+        msg += "▫️ 현재 시스템: <code>V77.34 무결점 디커플링 에디션 (V7.4 Assassin)</code>\n\n"
         
         for item in page_items:
             if isinstance(item, str):
@@ -299,27 +280,17 @@ class TelegramView:
         return msg, InlineKeyboardMarkup(keyboard)
 
     def create_sync_report(self, status_text, dst_text, cash, rp_amount, ticker_data, is_trade_active, p_trade_data=None, exchange_rate=None):
-        total_locked = 0.0
-        header_msg = ""
-        body_msg = ""
-        keyboard = []
-        real_cash = 0.0
-        krw_profit = 0.0
-        
-        total_locked = sum(t_info.get('escrow', 0.0) for t_info in ticker_data)
         header_msg = f"📜 <b>[ 통합 지시서 ({status_text}) ]</b>\n📅 <b>{dst_text}</b>\n"
         
-        if total_locked > 0:
-            real_cash = max(0, cash - total_locked)
-            header_msg += f"💵 한투 전체 잔고: ${cash:,.2f}\n"
-            header_msg += f"🔒 에스크로 격리금: -${total_locked:,.2f}\n"
-            header_msg += f"✅ 실질 가용 예산: ${real_cash:,.2f}\n"
-        else:
-            header_msg += f"💵 주문가능금액: ${cash:,.2f}\n"
-        
+        # 🚨 MODIFIED: [V77.33] 통합 지시서 에스크로 렌더링 팩트 소각
+        header_msg += f"💵 주문가능금액: ${cash:,.2f}\n"
         header_msg += f"🏛️ RP 투자권장: ${rp_amount:,.2f}\n"
         header_msg += "----------------------------\n\n"
         
+        keyboard = []
+        body_msg = ""
+        krw_profit = 0.0
+
         for t_info in ticker_data:
             t = t_info.get('ticker', 'UNK')
             v_mode = t_info.get('version', 'V14')
@@ -389,12 +360,6 @@ class TelegramView:
             
             body_msg += f"💵 총 시드: ${safe_seed:,.0f}\n🛒 <b>{bdg_txt}</b>\n"
        
-            escrow = t_info.get('escrow', 0.0)
-            if escrow > 0:
-                body_msg += f"🔐 내 금고 보호액: ${escrow:,.2f}\n"
-            elif is_rev_logic and proc_status == "🩸리버스(긴급수혈)":
-                body_msg += "🔐 내 금고 보호액: $0.00 (Empty 🚨)\n"
-            
             body_msg += f"💰 현재 ${safe_curr:,.2f} / 평단 ${safe_avg:,.2f} ({fact_qty}주)\n"
             
             if prev_close > 0 and day_high > 0 and day_low > 0:
@@ -447,11 +412,32 @@ class TelegramView:
                 body_msg += raw_guidance.replace(" (LOC)", "").replace(" (VWAP)", "").replace("[가상격리] ", "").replace("[가상 ", "[").replace("가상 ", "") + "\n"
             else:
                 if is_manual_vwap and not is_rev_logic:
-                    body_msg += "⏱️ <b>스케줄:</b> 15:26 EST KIS VWAP 실전 덫 장전 ➔ 알고리즘 위임\n"
+                    body_msg += "⏱️ <b>스케줄:</b> 17:05 KST 선제 덫 장전 ➔ 알고리즘 위임\n"
                 body_msg += f"📋 <b>[주문 계획 - {proc_status}]</b>\n"
+                
                 plan_orders = t_info.get('plan', {}).get('orders', [])
                 if plan_orders:
-                    for o in plan_orders:
+                    plan_orders_sorted = sorted(plan_orders, key=lambda x: 1 if x['side'] == 'SELL' else 0)
+                    jubjub_orders = [o for o in plan_orders_sorted if "🧲줍줍" in o.get('desc', '')]
+                    rendered_jubjub = False
+
+                    for o in plan_orders_sorted:
+                        if "🧲줍줍" in o.get('desc', ''):
+                            if not rendered_jubjub:
+                                if jubjub_orders:
+                                    min_price = min(x['price'] for x in jubjub_orders)
+                                    max_price = max(x['price'] for x in jubjub_orders)
+                                    total_jub_shares = sum(x['qty'] for x in jubjub_orders)
+                                    
+                                    if min_price == max_price:
+                                        price_str = f"${min_price:.2f}"
+                                    else:
+                                        price_str = f"(${min_price:.2f}~${max_price:.2f})"
+                                    
+                                    body_msg += f" 🔴 🧲줍줍: <b>{price_str} x {total_jub_shares}주</b> (LOC)\n"
+                                rendered_jubjub = True
+                            continue
+                            
                         ico = "🔴" if o['side'] == 'BUY' else "🔵"
                         desc = o['desc'].replace("🩸", "")
                         if "수혈" in o['desc']: ico = "🩸"
@@ -461,7 +447,6 @@ class TelegramView:
                     body_msg += " 💤 주문 없음 (관망/예산소진)\n"
 
             if is_trade_active:
-                # 🚨 MODIFIED: [V73.13 통합 지시서 수동 제어(EXEC/CANCEL) 완벽 스위칭 락온]
                 if t_info.get('is_locked', False):
                     body_msg += " (✅ 금일 주문 완료/잠금)\n"
                     keyboard.append([
@@ -482,6 +467,7 @@ class TelegramView:
 
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
 
+    # 🚨 MODIFIED: [Case 11] 다중 출격(Multi-Sortie) 스위치 동적 렌더링 락온
     def get_settlement_message(self, active_tickers, config, atr_data, tracking_cache=None):
         msg = ""
         keyboard = []
@@ -523,8 +509,11 @@ class TelegramView:
                     is_avwap_on = config.get_avwap_hybrid_mode(t)
                     avwap_status_txt = "실전 가동 중 🔥" if is_avwap_on else "대기 중 ⚪"
                     msg += f"▫️ AVWAP 암살자: <b>{avwap_status_txt}</b>\n"
-                
-                # 🚨 NEW: [V7.4 Assassin Lock-on] Apex Intercept 텍스트 렌더링 100% 영구 소각
+                    
+                    if is_avwap_on:
+                        sortie_mode = getattr(config, 'get_avwap_sortie_mode', lambda x: "SINGLE")(t)
+                        sortie_txt = "다중 출격 (무한 타격)" if sortie_mode == "MULTI" else "단일 타격 (조기 퇴근)"
+                        msg += f"▫️ 작전 궤도: <b>{sortie_txt}</b>\n"
                 
                 msg += "⚖️ <b>엔진 스탠바이:</b> 15:26 EST KIS VWAP 실전 덫 장전 및 관망 중\n\n"
             else:
@@ -541,7 +530,11 @@ class TelegramView:
                 is_avwap = config.get_avwap_hybrid_mode(t) if hasattr(config, 'get_avwap_hybrid_mode') else False
                 keyboard.append([InlineKeyboardButton(f"⚔️ 파격적 AVWAP 모멘텀 [ {'가동중' if is_avwap else 'OFF'} ]", callback_data=f"MODE:AVWAP_{'OFF' if is_avwap else 'WARN'}:{t}")])
                 
-                # 🚨 NEW: [V7.4 Assassin Lock-on] Apex Intercept 토글 버튼 100% 영구 소각하여 팻핑거 맹점 해체
+                if is_avwap:
+                    sortie_mode = getattr(config, 'get_avwap_sortie_mode', lambda x: "SINGLE")(t)
+                    next_sortie = "MULTI" if sortie_mode == "SINGLE" else "SINGLE"
+                    btn_text = "🔄 다중 출격 전환" if sortie_mode == "SINGLE" else "🔄 단일 타격 전환"
+                    keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"MODE:AVWAP_SORTIE:{t}:{next_sortie}")])
                 
                 if t == "SOXL": keyboard.append([InlineKeyboardButton(f"🔫 {t} 단일 롱 모멘텀 관제탑", callback_data=f"AVWAP:MENU:{t}")])
                 keyboard.append([InlineKeyboardButton(f"💸 {t} 복리", callback_data=f"INPUT:COMPOUND:{t}"), InlineKeyboardButton(f"💳 {t} 수수료", callback_data=f"INPUT:FEE:{t}")])
@@ -569,8 +562,8 @@ class TelegramView:
     def get_v14_mode_selection_menu(self, ticker):
         msg = f"💎 <b>[{ticker} 오리지널 집행 방식 선택]</b>\n\n"
         msg += "오리지널 무한매수법(V14)의 당일 예산 집행 방식을 선택해 주십시오.\n\n"
-        msg += "<b>1. 📉 LOC 방식 (기본)</b>\n▫️ 15:26 EST 전량 장마감시지정가(LOC) 실전 덫 전송\n\n"
-        msg += "<b>2. 🕒 VWAP 방식 (KIS 알고리즘 위임)</b>\n▫️ 15:26 EST KIS VWAP 실전 덫 장전\n\n"
+        msg += "<b>1. 📉 LOC 방식 (기본)</b>\n▫️ 17:05 KST 선제 LOC 실전 덫 전송\n\n"
+        msg += "<b>2. 🕒 VWAP 방식 (KIS 알고리즘 위임)</b>\n▫️ 17:05 KST KIS VWAP 실전 덫 장전\n\n"
         msg += "원하시는 집행 방식을 선택해 주십시오."
         
         keyboard = [
@@ -704,4 +697,3 @@ class TelegramView:
         if len(body) > (4000 - len(header) - len(footer)):
             body = "… (글자 수 제한으로 이전 로그 생략) …\n" + body[-(3800 - len(header) - len(footer)):]
         return header + body + footer
-

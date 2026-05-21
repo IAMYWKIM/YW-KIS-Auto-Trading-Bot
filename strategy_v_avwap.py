@@ -1,22 +1,30 @@
 # ==========================================================
 # FILE: strategy_v_avwap.py
 # ==========================================================
-# 🚨 MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
-# 🚨 MODIFIED: [V60.00 옴니 매트릭스 진입 차단망 전면 폐기 및 데드코드 소각]
-# 🚨 MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
-# 🚨 NEW: [V65.00 AVWAP 동적 하드스탑 락온]
-# 🚨 NEW: [V66.00 AVWAP 암살자 덤핑 지터(Jitter) 분산 락온]
-# 🚨 NEW: [V75.04 상태 캐시 기억상실(Amnesia) 완벽 수술]
-# 🚨 MODIFIED: [V76.01 ATR5 동적 하드스탑 영구 소각 및 투트랙 엑시트 절대 락온]
-# 🚨 MODIFIED: [V76.02 타점 역전 패러독스 하드 마진 락온 (매니저 제안 수혈)]
-# 🚨 MODIFIED: [V76.03 암살자 덤핑 지터(Jitter) 코어 연산 디커플링 해체 및 동적 타임라인 락온]
-# 🚨 NEW: [V77.00 V7.1 백테스트 절대 동기화 롤백 (Animal Spirit 야성 회복)]
-# 🚨 MODIFIED: [V77.01 데이터 기아 방어 및 런타임 무결성 팩트 수술] 
-# 🚨 NEW: [V77.02 프리마켓 관제탑 데이터 기아 및 런타임 붕괴 완벽 수술]
-# 🚨 MODIFIED: [V77.03 갭상승 휩소 원천 차단 및 Strict Touch 절대 락온]
-# 🚨 NEW: [V77.04 Operation Dawn Sniper - 프리장 선제 타격 및 50% 팩트 오프셋 롤백]
-# 🚨 MODIFIED: [V77.06 3.0% 한계 돌파 팩트 롤백] 
-# - 백테스트 증명에 따른 익절 목표가 1.03 고정 곱연산(3.0%) 상향 락온
+# MODIFIED: [V59.00 AVWAP 암살자 예산 100% 수혈 및 15:25 전량 덤핑 팩트 교정]
+# MODIFIED: [V60.00 옴니 매트릭스 진입 차단망 전면 폐기 및 데드코드 소각]
+# MODIFIED: [V61.00 숏(SOXS) 전면 소각 작전 지시서 적용]
+# NEW: [V65.00 AVWAP 동적 하드스탑 락온]
+# NEW: [V66.00 AVWAP 암살자 덤핑 지터(Jitter) 분산 락온]
+# NEW: [V75.04 상태 캐시 기억상실(Amnesia) 완벽 수술]
+# MODIFIED: [V76.01 ATR5 동적 하드스탑 영구 소각 및 투트랙 엑시트 절대 락온]
+# MODIFIED: [V76.02 타점 역전 패러독스 하드 마진 락온 (매니저 제안 수혈)]
+# MODIFIED: [V76.03 암살자 덤핑 지터(Jitter) 코어 연산 디커플링 해체 및 동적 타임라인 락온]
+# NEW: [V77.00 V7.1 백테스트 절대 동기화 롤백 (Animal Spirit 야성 회복)]
+# MODIFIED: [V77.01 데이터 기아 방어 및 런타임 무결성 팩트 수술] 
+# NEW: [V77.02 프리마켓 관제탑 데이터 기아 및 런타임 붕괴 완벽 수술]
+# MODIFIED: [V77.03 갭상승 휩소 원천 차단 및 Strict Touch 절대 락온]
+# NEW: [V77.04 Operation Dawn Sniper - 프리장 선제 타격 및 50% 팩트 오프셋 롤백]
+# MODIFIED: [V77.06 3.0% 한계 돌파 팩트 롤백] 
+# NEW: [V77.08] 백테스트 절대 동기화 - T_H 지정가 덫 선제 장전 및 상태기계 3.0% 청산 절대 락온
+# MODIFIED: [V77.09] 타점 역전 패러독스 강제 캡핑(Clamping) 영구 소각 및 순수 수학적 교차(Cross-over) 허용
+# MODIFIED: [V77.12] 추격 매수(Negative Slippage) 원천 차단 및 순수 지정가(T_H) 절대 락온 타격 엔진 이식
+# MODIFIED: [V77.13 수학적 락온 및 환각 수술] 0주 예산 산출 시 상태 변이(Split-Brain) 원천 차단
+# MODIFIED: [V77.14 백테스트 절대기준 동기화] 5분봉 과잉 방어 철거 및 순수 T_H 관통 타격 롤백
+# MODIFIED: [V77.18 프리마켓 시계열 경계 누수 완벽 수술 및 T_H/T_L 절대 앵커 락온 (정규장 데이터 유입 원천 차단)]
+# MODIFIED: [V77.21 09:30 기요틴 셧다운 락온] 정규장 T_L 하향 돌파 로직 영구 소각 및 프리장 체결 불발 시 09:30 정각 무조건 셧다운(퇴근) 적용
+# NEW: [V77.30 관제탑 렌더링 무결성 사수] 암살자가 퇴근(Shutdown)해도 관제탑 레이더에 팩트 데이터가 영구 표출되도록 파싱 스코프 전진 배치 완료
+# 🚨 NEW: [Case 11] 다중 출격(Multi-Sortie) 파이프라인 및 조건부 기요틴 엔진 팩트 락온
 # ==========================================================
 import logging
 import datetime
@@ -31,8 +39,7 @@ import tempfile
 
 class VAvwapHybridPlugin:
     def __init__(self):
-        # NEW: [V77.06 플러그인 닉네임 교체 - 3% 한계 돌파 모드]
-        self.plugin_name = "AVWAP_V77.06_DAWN_SNIPER_3PCT"
+        self.plugin_name = "AVWAP_V77.34_MULTI_SORTIE"
         self.leverage = 3.0       
 
     def _get_logical_date_str(self, now_est):
@@ -59,7 +66,6 @@ class VAvwapHybridPlugin:
                     if qty > 0:
                         data['bought'] = True
                         data['shutdown'] = False
-                        # MODIFIED: [V77.04] 이월된 물량이 있으므로 당일 추가 진입 차단
                         data['executed_buy'] = True 
                     else:
                         data['qty'] = 0
@@ -69,10 +75,11 @@ class VAvwapHybridPlugin:
                         data['bought'] = False
                         data['daily_bought_qty'] = 0
                         data['daily_sold_qty'] = 0
-                        # MODIFIED: [V77.04] 일일 1회 타격 래치 초기화
                         data['executed_buy'] = False
+                        
+                        data['limit_order_placed'] = False
+                        data['placed_target_th'] = 0.0
 
-                    # MODIFIED: [V77.04] 상태 변수 포맷 및 pm_locked 소각
                     data['PM_H'] = 0.0
                     data['PM_L'] = 0.0
                     data['T_H'] = 0.0
@@ -85,24 +92,26 @@ class VAvwapHybridPlugin:
                     data['date'] = today_str
                     self.save_state(ticker, now_est, data)
                 
-                # 안전 형변환 보장
                 data['PM_H'] = float(data.get('PM_H', 0.0))
                 data['PM_L'] = float(data.get('PM_L', 0.0))
                 data['T_H'] = float(data.get('T_H', 0.0))
                 data['T_L'] = float(data.get('T_L', 0.0))
                 data['offset'] = float(data.get('offset', 0.0))
                 data['executed_buy'] = bool(data.get('executed_buy', False))
+                
+                data['limit_order_placed'] = bool(data.get('limit_order_placed', False))
+                data['placed_target_th'] = float(data.get('placed_target_th', 0.0))
 
                 return data
             except Exception:
                 pass
 
-        # MODIFIED: [V77.04] 초기 상태값 구성 (pm_locked 소각 완비)
         return {
             "executed_buy": False, "shutdown": False, "strikes": 0, "qty": 0, 
             "avg_price": 0.0, "daily_bought_qty": 0, "daily_sold_qty": 0, 
             "dump_jitter_sec": random.randint(0, 180),
-            "PM_H": 0.0, "PM_L": 0.0, "T_H": 0.0, "T_L": 0.0, "offset": 0.0
+            "PM_H": 0.0, "PM_L": 0.0, "T_H": 0.0, "T_L": 0.0, "offset": 0.0,
+            "limit_order_placed": False, "placed_target_th": 0.0
         }
 
     def save_state(self, ticker, now_est, state_data):
@@ -208,7 +217,8 @@ class VAvwapHybridPlugin:
             logging.error(f"🚨 [V_AVWAP] YF 기초자산 매크로 컨텍스트 추출 실패 ({base_ticker}): {e}")
             return None
 
-    def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avwap_avg_price=0.0, avwap_qty=0, avwap_alloc_cash=0.0, context_data=None, df_1min_base=None, df_1min_exec=None, now_est=None, avwap_state=None, regime_data=None, is_simulation=False, **kwargs):
+    # 🚨 MODIFIED: [Case 11] 다중 출격(sortie_mode) 파라미터 수혈
+    def get_decision(self, base_ticker=None, exec_ticker=None, base_curr_p=0.0, exec_curr_p=0.0, base_day_open=0.0, avwap_avg_price=0.0, avwap_qty=0, avwap_alloc_cash=0.0, context_data=None, df_1min_base=None, df_1min_exec=None, now_est=None, avwap_state=None, regime_data=None, is_simulation=False, sortie_mode="SINGLE", **kwargs):
         # 제16 절대 헌법: 변수 스코프 최상단 전진 배치
         avwap_qty = avwap_qty if avwap_qty != 0 else kwargs.get('current_qty', 0)
         exec_curr_p = exec_curr_p if exec_curr_p > 0 else kwargs.get('exec_curr_p', 0.0)
@@ -217,11 +227,10 @@ class VAvwapHybridPlugin:
         amp5 = float(kwargs.get('amp5', 0.0))
         prev_c = float(kwargs.get('prev_close', 0.0))
         
-        hit_h = False
-        hit_l = False
         curr_pm_h = 0.0
         curr_pm_l = 0.0
         curr_c = 0.0
+        curr_l = 0.0
         curr_offset = 0.0
         curr_t_h = 0.0
         curr_t_l = 0.0
@@ -236,6 +245,9 @@ class VAvwapHybridPlugin:
         is_shutdown = persistent_state.get('shutdown', False)
         executed_buy = persistent_state.get('executed_buy', False)
         
+        limit_order_placed = persistent_state.get('limit_order_placed', False)
+        placed_target_th = persistent_state.get('placed_target_th', 0.0)
+        
         dump_jitter_sec = persistent_state.get('dump_jitter_sec', 0)
         base_dump_dt = datetime.datetime.combine(now_est.date(), datetime.time(15, 20)).replace(tzinfo=ZoneInfo('America/New_York'))
         dynamic_dump_dt = base_dump_dt - datetime.timedelta(seconds=dump_jitter_sec)
@@ -247,64 +259,7 @@ class VAvwapHybridPlugin:
         t_l = persistent_state.get('T_L', 0.0)
         offset = persistent_state.get('offset', 0.0)
 
-        def _build_res(action, reason, qty=0, target_price=0.0):
-            return {
-                'action': action,
-                'reason': reason,
-                'qty': qty,
-                'target_price': target_price,
-                'vwap': 0.0,
-                'base_curr_p': base_curr_p,
-                'prev_vwap': context_data.get('prev_vwap', 0.0) if context_data else 0.0,
-                'PM_H': pm_h,
-                'PM_L': pm_l,
-                'T_H': t_h,
-                'T_L': t_l,
-                'offset': offset
-            }
-
-        # ---------------------------------------------------------
-        # 1. 매도 (보유 중일 때) 로직 - V7.1 백테스트 투트랙 자동 청산
-        # ---------------------------------------------------------
-        if avwap_qty > 0:
-            safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
-
-            if safe_avg <= 0:
-                return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=avwap_qty, target_price=exec_curr_p)
-
-            if curr_time >= time_dynamic_dump:
-                persistent_state["shutdown"] = True
-                if not is_simulation:
-                    self.save_state(exec_ticker, now_est, persistent_state)
-                return _build_res('SELL', '동적_덤핑_타임라인_도달_전량_시장가_덤핑', qty=avwap_qty, target_price=exec_curr_p)
-
-            # 🚨 MODIFIED: [V77.06] 2% -> 3% 한계 돌파 익절 상향 락온
-            exit_target_price = round(safe_avg * 1.03, 2)
-            if exec_curr_p >= exit_target_price:
-                return _build_res('SELL', '목표가(+3.0%)_도달_순수모멘텀_익절_격발', qty=avwap_qty, target_price=exit_target_price)
-
-            return _build_res('HOLD', '보유중_순수익절(+3.0%)_및_동적덤핑_감시중')
-
-        # ---------------------------------------------------------
-        # 2. 매수 (포지션 0주 일 때) 로직 - V77.04 프리장 선제 타격 엔진
-        # ---------------------------------------------------------
-        if is_shutdown:
-            return _build_res('WAIT', '당일영구동결_상태(신규진입금지)')
-
-        if curr_time >= time_dynamic_dump:
-            persistent_state["shutdown"] = True
-            if not is_simulation:
-                self.save_state(exec_ticker, now_est, persistent_state)
-            return _build_res('SHUTDOWN', '동적_덤핑_타임라인_도달_신규진입_영구동결')
-
-        if prev_c <= 0 or amp5 <= 0:
-            return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
-            
-        # 일일 1회 격발 (1-Shot 1-Kill) 절대 룰 락온
-        if executed_buy:
-            return _build_res('WAIT', '일일_1회_타격_완료_매매_종료(Zero_Sum_대기)')
-
-        # 04:00 EST부터 스코프 전면 개방 및 종가(Close) 기반 동적 타겟 추적(Trailing)
+        # 🚨 [V77.30 관제탑 렌더링 무결성 사수]
         if curr_time >= time_0400:
             df_1m = df_1min_exec
             if df_1m is not None and not df_1m.empty and 'time_est' in df_1m.columns:
@@ -312,18 +267,25 @@ class VAvwapHybridPlugin:
                 df_today = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= curr_time_str)]
                 
                 if not df_today.empty:
-                    # 타임 패러독스 원천 차단: 오직 종가(close)만으로 고저점 갱신 및 타점 스캔
-                    curr_pm_h = float(df_today['close'].max())
-                    curr_pm_l = float(df_today['close'].min())
-                    curr_c = float(df_today.iloc[-1]['close'])
+                    # 🚨 MODIFIED: [V77.18] 프리마켓 시계열 경계 누수 완벽 수술 및 T_H/T_L 절대 앵커 락온
+                    slice_end_str = '092959' if curr_time >= time_0930 else curr_time_str
+                    df_pm = df_1m[(df_1m['time_est'] >= '040000') & (df_1m['time_est'] <= slice_end_str)]
                     
-                    # 진폭 안전 마진(Offset) 50% 팩트 상향 조정
+                    if not df_pm.empty:
+                        curr_pm_h = float(df_pm['close'].max())
+                        curr_pm_l = float(df_pm['close'].min())
+                    else:
+                        curr_pm_h = 0.0
+                        curr_pm_l = 0.0
+
+                    curr_c = float(df_today.iloc[-1]['close'])
+                    curr_l = float(df_today.iloc[-1]['low'])
+                    
                     curr_offset = prev_c * amp5 * 0.50
+                    
+                    # MODIFIED: [V77.14] 백테스트 절대기준 동기화: T_H 하향 캡핑 소각 및 순수 수학적 역전 허용
                     curr_t_h = curr_pm_h - curr_offset
                     curr_t_l = curr_pm_l + curr_offset
-                    
-                    if curr_t_l >= curr_t_h:
-                        curr_t_l = max(0.01, curr_t_h - 0.01)
 
                     pm_h = curr_pm_h
                     pm_l = curr_pm_l
@@ -339,36 +301,99 @@ class VAvwapHybridPlugin:
                     
                     if not is_simulation:
                         self.save_state(exec_ticker, now_est, persistent_state)
-                        
-                    # 종가(Close) 기준 하향 돌파(터치) 시 프리장/정규장 구분 없이 선제 격발
-                    hit_h = (curr_c <= t_h)
+
+        def _build_res(action, reason, qty=0, target_price=0.0):
+            return {
+                'action': action,
+                'reason': reason,
+                'qty': qty,
+                'target_price': target_price,
+                'vwap': 0.0,
+                'base_curr_p': base_curr_p,
+                'prev_vwap': context_data.get('prev_vwap', 0.0) if context_data else 0.0,
+                'PM_H': pm_h,
+                'PM_L': pm_l,
+                'T_H': t_h,
+                'T_L': t_l,
+                'offset': offset,
+                'limit_order_placed': limit_order_placed,
+                'placed_target_th': placed_target_th
+            }
+
+        if avwap_qty > 0:
+            safe_avg = avwap_avg_price if avwap_avg_price > 0 else exec_curr_p
+
+            if safe_avg <= 0:
+                return _build_res('SELL', 'CORRUPT_PRICE_EMERGENCY_DUMP', qty=avwap_qty, target_price=exec_curr_p)
+
+            if curr_time >= time_dynamic_dump:
+                persistent_state["shutdown"] = True
+                if not is_simulation:
+                    self.save_state(exec_ticker, now_est, persistent_state)
+                return _build_res('SELL', '동적_덤핑_타임라인_도달_전량_시장가_덤핑', qty=avwap_qty, target_price=exec_curr_p)
+
+            exit_target_price = round(safe_avg * 1.03, 2)
+            if exec_curr_p >= exit_target_price:
+                return _build_res('SELL', '목표가(+3.0%)_도달_순수모멘텀_익절_격발', qty=avwap_qty, target_price=exit_target_price)
+
+            return _build_res('HOLD', '보유중_순수익절(+3.0%)_및_동적덤핑_감시중')
+
+        if is_shutdown:
+            return _build_res('WAIT', '당일영구동결_상태(신규진입금지)')
+
+        if curr_time >= time_dynamic_dump:
+            persistent_state["shutdown"] = True
+            if not is_simulation:
+                self.save_state(exec_ticker, now_est, persistent_state)
+            return _build_res('SHUTDOWN', '동적_덤핑_타임라인_도달_신규진입_영구동결')
+
+        if prev_c <= 0 or amp5 <= 0:
+            return _build_res('WAIT', '진입_평가용_필수데이터_결측_대기')
+            
+        # 🚨 MODIFIED: [Case 11] 다중 출격 모드가 아닐 경우(단일 타격)에만 매매 종료 락온 적용
+        if executed_buy and sortie_mode == "SINGLE":
+            return _build_res('WAIT', '일일_1회_타격_완료_매매_종료(단일타격_모드)')
+
+        # 🚨 MODIFIED: [Case 11] 조건부 기요틴: 프리장 미체결(executed_buy == False) 상태에서만 정규장 휩소 회피 셧다운 격발
+        if curr_time >= time_0930 and not executed_buy:
+            persistent_state["shutdown"] = True
+            persistent_state["limit_order_placed"] = False
+            persistent_state["placed_target_th"] = 0.0
+            limit_order_placed = False
+            placed_target_th = 0.0
+            
+            if not is_simulation:
+                self.save_state(exec_ticker, now_est, persistent_state)
+                
+            logging.info(f"🛑 [09:30 기요틴 셧다운] 프리장 매수 체결 불발. 정규장 폭락 휩소를 회피하기 위해 당일 매매를 종료(퇴근)합니다.")
+            return _build_res('SHUTDOWN', '09:30_기요틴_프리장미체결_정규장회피_당일퇴근')
+            
+        # 🚨 MODIFIED: [V77.14] 백테스트 절대기준 동기화: 5분봉 지지 필터 소각 및 순수 T_H 타점 관통 락온
+        if not limit_order_placed:
+            if curr_l > 0 and curr_l <= t_h:
+                
+                # 🚨 제16 절대 헌법: 예산 분할 연산을 상태 변이 앞단으로 전진 배치
+                safe_budget = avwap_alloc_cash * 0.95
+                buy_qty = int(math.floor(safe_budget / t_h)) if t_h > 0 else 0
+                
+                # 🚨 0주 산출 시 발생하는 기억 상실 환각(Split-Brain) 맹점 원천 차단
+                if buy_qty > 0:
+                    persistent_state['limit_order_placed'] = True
+                    persistent_state['placed_target_th'] = t_h
+                    limit_order_placed = True
+                    placed_target_th = t_h
                     
-                    # 하락장 셧다운(퇴근) 판독은 오직 정규장 개장(09:30 EST) 이후에만 가동
-                    if curr_time >= time_0930:
-                        hit_l = (curr_c <= t_l)
-                        
-                    # 제6 헌법: 정규장 중 동시 터치 발생 시, 퇴근(Shutdown) 우선 룰 적용
-                    if hit_h and hit_l:
-                        hit_h = False
-                        
-                    if hit_l:
-                        persistent_state["shutdown"] = True
-                        if not is_simulation:
-                            self.save_state(exec_ticker, now_est, persistent_state)
-                        logging.info(f"🛑 [V77.04 정규장 셧다운] 1분봉 종가({curr_c:.2f})가 T_L({t_l:.2f}) 하향 돌파. 당일 매매 퇴근 완료!")
-                        return _build_res('SHUTDOWN', '정규장_T_L하향돌파_당일매매퇴근')
-                        
-                    if hit_h:
-                        safe_budget = avwap_alloc_cash * 0.95
-                        buy_qty = int(math.floor(safe_budget / exec_curr_p)) if exec_curr_p > 0 else 0
-                        if buy_qty > 0:
-                            persistent_state['executed_buy'] = True
-                            if not is_simulation:
-                                self.save_state(exec_ticker, now_est, persistent_state)
-                            logging.info(f"🚀 [V77.04 Dawn Sniper 격발] 1분봉 종가({curr_c:.2f})가 T_H({t_h:.2f}) 하향 터치. 선제 타격 진입!")
-                            # 제22 절대 규칙: 페이로드에는 실제 호가 직결 매수용 Ask Price(exec_curr_p) 적재 보존
-                            return _build_res('BUY', '프리장_종가선제타격_격발', qty=buy_qty, target_price=exec_curr_p)
+                    if not is_simulation:
+                        self.save_state(exec_ticker, now_est, persistent_state)
+                    
+                    logging.info(f"🚀 [V77.14 덫 장전] 1분봉 저가({curr_l:.2f}) T_H 순수 관통. 지정가({placed_target_th:.2f}) 타격 락온!")
+                    return _build_res('PLACE_TRAP', 'T_H순수관통_지정가_덫장전', qty=buy_qty, target_price=placed_target_th)
                 else:
-                    return _build_res('WAIT', '당일_캔들데이터_결측')
+                    return _build_res('WAIT', '조건_충족이나_예산부족(0주)_덫장전_보류')
+        else:
+            if curr_l > 0 and curr_l <= placed_target_th:
+                return _build_res('VERIFY_TRAP_FILL', '지정가덫_하향관통_실체결검증_및_익절덫동시투하_요청', qty=0, target_price=placed_target_th)
+            else:
+                return _build_res('TRAP_WAIT', f'선제지정가덫({placed_target_th:.2f})_시장대기중', qty=0, target_price=placed_target_th)
 
         return _build_res('WAIT', '동적_순수타격선_도달_감시중')
