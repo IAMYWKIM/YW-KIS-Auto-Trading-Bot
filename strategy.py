@@ -32,6 +32,7 @@
 # - get_avwap_decision 파라미터에서 낡은 fee_rate, is_apex_on 영구 소각
 # - df_1min_exec 팩트 수혈 파라미터 신규 개통 및 릴레이 배선 적용
 # 🚨 NEW: [Case 11] 다중 출격(Multi-Sortie) 모드 파라미터 수혈 배선 이식
+# 🚨 NEW: [라우팅 누수 방어] V14 스나이퍼 감시 라우터(check_sniper_condition) 배선 개통 완료
 # ==========================================================
 import logging
 import pandas as pd
@@ -166,6 +167,14 @@ class InfiniteStrategy:
             
         return plan
 
+    # NEW: [라우팅 누수 방어] V14 스나이퍼 감시 라우터 배선 개통 완료
+    def check_sniper_condition(self, ticker, cfg, broker, chat_id):
+        version = self.cfg.get_version(ticker)
+        if version == "V14":
+            if hasattr(self.v14_plugin, 'check_sniper_condition'):
+                return self.v14_plugin.check_sniper_condition(ticker, cfg, broker, chat_id)
+        return {"action": "HOLD", "reason": "스나이퍼 감시 대기(또는 모듈 없음)", "limit_price": 0.0, "qty": 0}
+
     def capture_vrev_snapshot(self, ticker, clear_price, avg_price, qty):
         if qty <= 0: return None
         
@@ -201,7 +210,6 @@ class InfiniteStrategy:
     def fetch_avwap_macro(self, base_ticker):
         return self.v_avwap_plugin.fetch_macro_context(base_ticker)
 
-    # 🚨 MODIFIED: [Case 11] sortie_mode 파라미터 릴레이 배선 이식
     def get_avwap_decision(self, base_ticker, exec_ticker, base_curr_p, exec_curr_p, base_day_open, avg_price, qty, alloc_cash, context_data, df_1min_base, now_est, avwap_state=None, regime_data=None, is_simulation=False, df_1min_exec=None, sortie_mode="SINGLE", **kwargs):
         return self.v_avwap_plugin.get_decision(
             base_ticker=base_ticker, exec_ticker=exec_ticker, base_curr_p=base_curr_p, exec_curr_p=exec_curr_p, 

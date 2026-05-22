@@ -2,7 +2,7 @@
 # FILE: telegram_view.py
 # ==========================================================
 # 🚨 MODIFIED: [V77.33 엣지케이스 팩트 수술] 통합 지시서 에스크로(Escrow) UI 렌더링 전면 소각
-# 🚨 MODIFIED: [UI 렌더링 무결성] 최신 버전 V77.34 락온
+# 🚨 MODIFIED: [UI 렌더링 무결성] 최신 버전 V77.34 락온 및 시작 메뉴 텍스트 간소화 (텔레그램 네이티브 공백 교정)
 # 🚨 NEW: [Case 11] 환경설정(/settlement)에 다중 출격(Multi-Sortie) 스위치 동적 렌더링 팩트 교정
 # ==========================================================
 import os
@@ -67,19 +67,19 @@ class TelegramView:
         sync_time = "05:05" if is_dst else "06:05"    
         dst_state = "🌞서머타임 ON" if is_dst else "❄️서머타임 OFF"
         
-        msg = f"🌌 [ 옴니 매트릭스 퀀트 엔진 {latest_version} ]\n"
+        msg = f"🌌 <b>[ 옴니 매트릭스 퀀트 엔진 {latest_version} ]</b>\n"
         msg += "💠 무결성 싱글 롱 모멘텀 (SOXL 전용) & V-REV 갭 스위칭\n\n"
         
-        msg += f"🕒 [ 운영 스케줄 ({dst_state}) ]\n"
+        msg += f"🕒 <b>[ 운영 스케줄 ({dst_state}) ]</b>\n"
         msg += f"🔹 {fact_hour}:00 : 🔐 매매 초기화 및 변동성 락온\n"
-        msg += f"🔹 {fact_hour}:05 : 📸 V14 선제 덫 장전 & V-REV 모의 스냅샷\n"
+        msg += f"🔹 {fact_hour}:05 : 📸 V14장전 & V-REV스냅샷\n"
         msg += f"🔹 {matrix_time} : 🏛️ 옴니 매트릭스 시장 국면 판별\n"
         msg += f"🔹 {trap_time} : 🌃 V-REV 덫 실전 투하\n"
-        msg += "   (자전거래 차단)\n"
+        msg += "       (자전거래 차단)\n"
         msg += f"🔹 {sync_time} : 📝 확정 정산 스캔 & 졸업 발급\n"
         msg += "🔹 6시간 간격 : 🔑 API 토큰 자동 갱신\n\n"
         
-        msg += "🛠 [ 주요 명령어 ]\n"
+        msg += "🛠 <b>[ 주요 명령어 ]</b>\n"
         msg += "▶️ /sync : 📜 통합 지시서 조회\n"
         msg += "▶️ /record : 📊 장부 동기화 및 조회\n"
         msg += "▶️ /history : 🏆 졸업 명예의 전당\n"
@@ -94,7 +94,7 @@ class TelegramView:
         msg += "⚠️ /reset : 🔓 비상 해제 메뉴 (락/리버스)\n"
         msg += "┗ 🚨 수동 닻 올리기: 예산 부족으로 리버스 진입 후 예수금을 추가 입금하셨다면, 이 메뉴에서 반드시 '리버스 강제 해제' 버튼을 눌러주세요!\n\n"
         
-        msg += "⚠️ /update : 🚀 시스템 자가 업데이트 (경고: 로컬 코드가 초기화됨)\n"
+        msg += "⚠️ /update : 🚀 시스템 자가 업데이트 (경고: 로컬 코드가 초기화됨)"
         return msg
 
     def get_update_confirm_menu(self):
@@ -282,7 +282,6 @@ class TelegramView:
     def create_sync_report(self, status_text, dst_text, cash, rp_amount, ticker_data, is_trade_active, p_trade_data=None, exchange_rate=None):
         header_msg = f"📜 <b>[ 통합 지시서 ({status_text}) ]</b>\n📅 <b>{dst_text}</b>\n"
         
-        # 🚨 MODIFIED: [V77.33] 통합 지시서 에스크로 렌더링 팩트 소각
         header_msg += f"💵 주문가능금액: ${cash:,.2f}\n"
         header_msg += f"🏛️ RP 투자권장: ${rp_amount:,.2f}\n"
         header_msg += "----------------------------\n\n"
@@ -467,7 +466,6 @@ class TelegramView:
 
         return final_msg, InlineKeyboardMarkup(keyboard) if keyboard else None
 
-    # 🚨 MODIFIED: [Case 11] 다중 출격(Multi-Sortie) 스위치 동적 렌더링 락온
     def get_settlement_message(self, active_tickers, config, atr_data, tracking_cache=None):
         msg = ""
         keyboard = []
