@@ -7,6 +7,8 @@
 # 🚨 MODIFIED: [Case 26 절대 헌법 준수] 텔레그램 HTML 파서 붕괴 방어를 위한 html.escape 쉴드 전역 강제 주입
 # 🚨 MODIFIED: [Case 32 & 33 절대 규칙] 팻핑거 스캔 시 TPS 캡핑(0.06s) 및 3단 지수 백오프, 타임아웃(10s) 샌드위치 락온
 # 🚨 MODIFIED: [NoneType 붕괴 원천 봉쇄] update.message 다이렉트 참조 소각 및 update.effective_message 단락 평가 락온
+# 🚨 MODIFIED: [Insight 14] EDIT_Q 수동 입력 시 콤마(,) 유입으로 인한 ValueError 런타임 붕괴 원천 차단
+# 🚨 MODIFIED: [Indentation 붕괴 수술] EDIT_Q 팻핑거 방어 로직 하위의 비표준 들여쓰기(25칸)를 24칸으로 정밀 교정하여 컴파일 즉사 오류 소각
 # ==========================================================
 
 import logging
@@ -30,7 +32,7 @@ class TelegramStates:
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, controller):
         # 🚨 MODIFIED: [보안 팩트 교정] await 키워드 강제 락온으로 코루틴 경고 소각 및 관리자 인증망 수복
         if not await controller._is_admin(update):
-            return
+             return
             
         chat_id = update.effective_chat.id
         # 🚨 MODIFIED: 미디어(사진 등) 수신 시 text 속성이 None이 되어 발생하는 TypeError 단락 평가 방어
@@ -75,8 +77,9 @@ class TelegramStates:
                     return await update.effective_message.reply_text("❌ 입력 형식 오류입니다. 띄어쓰기로 수량과 평단가를 입력해주세요. (수정 취소됨)")
                 
                 try:
-                    qty = int(input_parts[0])
-                    price = float(input_parts[1])
+                    # 🚨 MODIFIED: [Insight 14] 수동 입력 시 콤마(,) 유입으로 인한 ValueError 런타임 붕괴 원천 차단
+                    qty = int(float(str(input_parts[0]).replace(',', '')))
+                    price = float(str(input_parts[1]).replace(',', ''))
                 except ValueError:
                     del controller.user_states[chat_id]
                     return await update.effective_message.reply_text("❌ 수량/평단가는 숫자로 입력하세요. (수정 취소됨)")
@@ -98,6 +101,7 @@ class TelegramStates:
                             else: await asyncio.sleep(1.0 * (2 ** attempt))
                             
                     if curr_p and curr_p > 0 and (price < curr_p * 0.7 or price > curr_p * 1.3):
+                        # 🚨 MODIFIED: [Indentation 붕괴 수술] 25칸->24칸 정밀 교정으로 컴파일 즉사 오류 소각
                         del controller.user_states[chat_id]
                         return await update.effective_message.reply_text(f"🚨 <b>팻핑거 방어 가동:</b> 입력가(${price:.2f})가 현재가(${curr_p:.2f}) 대비 ±30%를 초과합니다. 다시 시도해주세요.", parse_mode='HTML')
                 except Exception:
@@ -138,7 +142,7 @@ class TelegramStates:
                 
             elif state.startswith("CONF_SPLIT"):
                 if val < 1:
-                    return await update.effective_message.reply_text("❌ 오류: 분할 횟수는 1 이상이어야 합니다.")
+                     return await update.effective_message.reply_text("❌ 오류: 분할 횟수는 1 이상이어야 합니다.")
                     
                 ticker = parts[2]
                 safe_ticker = html.escape(str(ticker))

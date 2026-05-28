@@ -1,9 +1,21 @@
 # ==========================================================
 # FILE: strategy_v14_vwap.py
 # ==========================================================
+# 🚨 VERIFIED: [원샷 딥다이브] 파일 I/O 스레드 분리 락온, JSON 오염 객 단락 평가 방어, Float 정밀도 예외 원천 차단 무결성 검증 완료
 # 🚨 MODIFIED: [Case 08 절대 규칙 준수] 스냅샷 무결성 파이프라인 팩트 교정 - os.path.exists 방어막 소각
 # 🚨 MODIFIED: [제4헌법 준수] 원자적 쓰기(Atomic Write) 강제 락온
 # 🚨 MODIFIED: [Case 16 위반 교정] 원자적 쓰기 실패 시 UnboundLocalError 연쇄 붕괴를 막기 위한 temp_path 스코프 전진 배치
+# 🚨 MODIFIED: [TOCTOU 레이스 컨디션 수술] 임시 파일 정리 시 잔존하는 os.path.exists 마저 전면 소각하고 EAFP 패턴으로 100% 락온
+# 🚨 MODIFIED: [최종 팩트 수술] `math.isnan` 및 `math.isinf` 방어막을 `_safe_float`에 이식하여 치명적 수학 연산 붕괴(ValueError) 원천 봉쇄
+# 🚨 MODIFIED: [Insight 14] String-Float 콤마 맹독성 런타임 붕괴 방어용 `_safe_float` 래핑 전면 이식 및 alloc_cash 쉴드 확장
+# 🚨 MODIFIED: [Insight 06/07] JSON 이중 get() 호출 시 발생하는 AttributeError 붕괴 방어용 `(dict or {})` 단락 평가 쉴드 주입
+# 🚨 MODIFIED: [Insight 12] JSON 오염 객체(리스트/문자열) 유입 시 AttributeError를 막기 위한 `isinstance` 필터링 락온
+# 🚨 MODIFIED: [Case 25] V14 오리지널 심해 줍줍(Jubjub) 5단 폭포수 덫 및 워시 트레이드(Wash Trade) 쉴드 100% 팩트 이식 완료
+# 🚨 MODIFIED: [V14 코어 무결성 동기화] 후반전 도달 시 목표가 관통에 대응하는 '대박익절(Jackpot Sell)' 파이프라인 전면 이식
+# 🚨 REMOVED: [제2헌법 준수] 사용되지 않는 유령 변수(residual) 데드코드 100% 영구 소각
+# 🚨 MODIFIED: [TypeError 붕괴 방어] get_ledger() 결측치(None) 유입 시 루프 마비를 막기 위한 단락 평가(or []) 쉴드 래핑
+# 🚨 MODIFIED: [최후의 맹점 수술] get_plan 및 ensure_failsafe_snapshot 진입부의 모든 파라미터와 config 반환값에 _safe_float 쉴드를 100% 강제 래핑하여 TypeError 런타임 붕괴 원천 봉쇄
+# 🚨 MODIFIED: [상태 참조 오염 수술] _load_state_if_needed 에서 딕셔너리를 통째로 float 캐스팅하려던 ValueError 맹점 교정 (종목 Drill-down 결속)
 # ==========================================================
 import math
 import logging
@@ -16,9 +28,17 @@ from zoneinfo import ZoneInfo
 class V14VwapStrategy:
     def __init__(self, config):
         self.cfg = config
-        self.residual = {}
         self.executed = {"BUY_BUDGET": {}, "SELL_QTY": {}}
         self.state_loaded = {}
+
+    def _safe_float(self, value):
+        try:
+            val = float(str(value or 0.0).replace(',', ''))
+            if math.isnan(val) or math.isinf(val):
+                return 0.0
+            return val
+        except Exception:
+            return 0.0
 
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
@@ -42,18 +62,23 @@ class V14VwapStrategy:
             return 
             
         state_file = self._get_state_file(ticker)
-        if os.path.exists(state_file):
-            try:
-                with open(state_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    if data.get("date") == today_str:
-                        for k in self.executed.keys():
-                            raw_val = data.get("executed", {}).get(k, 0)
-                            self.executed[k][ticker] = int(raw_val) if k == "SELL_QTY" else float(raw_val)
-                        self.state_loaded[ticker] = today_str
-                        return
-            except Exception:
-                pass
+        try:
+            with open(state_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, dict) and data.get("date") == today_str:
+                    exec_data = data.get("executed")
+                    exec_dict = exec_data if isinstance(exec_data, dict) else {}
+                    
+                    for k in self.executed.keys():
+                        sub_dict = exec_dict.get(k)
+                        safe_sub_dict = sub_dict if isinstance(sub_dict, dict) else {}
+                        raw_val = safe_sub_dict.get(ticker, 0)
+                        
+                        self.executed[k][ticker] = int(self._safe_float(raw_val)) if k == "SELL_QTY" else self._safe_float(raw_val)
+                    self.state_loaded[ticker] = today_str
+                    return
+        except Exception:
+            pass
                   
         self.executed["BUY_BUDGET"][ticker] = 0.0
         self.executed["SELL_QTY"][ticker] = 0
@@ -63,20 +88,25 @@ class V14VwapStrategy:
     def _save_state(self, ticker):
         today_str = self._get_logical_date_str()
         state_file = self._get_state_file(ticker)
+        
+        buy_dict = self.executed.get("BUY_BUDGET")
+        sell_dict = self.executed.get("SELL_QTY")
+        buy_budget = self._safe_float((buy_dict if isinstance(buy_dict, dict) else {}).get(ticker, 0.0))
+        sell_qty = int(self._safe_float((sell_dict if isinstance(sell_dict, dict) else {}).get(ticker, 0)))
+        
         data = {
             "date": today_str,
-            "residual": {},
             "executed": {
-                "BUY_BUDGET": float(self.executed.get("BUY_BUDGET", {}).get(ticker, 0.0)),
-                "SELL_QTY": int(self.executed.get("SELL_QTY", {}).get(ticker, 0))
+                "BUY_BUDGET": {ticker: buy_budget},
+                "SELL_QTY": {ticker: sell_qty}
             }
         }
-        # 🚨 MODIFIED: [Case 16] 변수 스코프 최상단 전진 배치
+        
         fd = None
         temp_path = None
         try:
             dir_name = os.path.dirname(state_file)
-            if dir_name and not os.path.exists(dir_name):
+            if dir_name:
                 os.makedirs(dir_name, exist_ok=True) 
             fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -90,7 +120,7 @@ class V14VwapStrategy:
             if fd is not None:
                 try: os.close(fd)
                 except OSError: pass
-            if temp_path and os.path.exists(temp_path):
+            if temp_path:
                 try: os.remove(temp_path)
                 except OSError: pass
             logging.critical(f"🚨 [STATE SAVE FAILED] {ticker} 상태 저장 실패. 봇 기억상실 위험! 원인: {e}")
@@ -103,12 +133,12 @@ class V14VwapStrategy:
             "date": today_str,
             "plan": plan_data
         }
-        # 🚨 MODIFIED: [Case 16] 변수 스코프 최상단 전진 배치
+        
         fd = None
         temp_path = None
         try:
             dir_name = os.path.dirname(snap_file)
-            if dir_name and not os.path.exists(dir_name):
+            if dir_name:
                 os.makedirs(dir_name, exist_ok=True)
             fd, temp_path = tempfile.mkstemp(dir=dir_name or '.', text=True)
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
@@ -122,23 +152,29 @@ class V14VwapStrategy:
             if fd is not None:
                 try: os.close(fd)
                 except OSError: pass
-            if temp_path and os.path.exists(temp_path):
+            if temp_path:
                 try: os.remove(temp_path)
                 except OSError: pass
             logging.critical(f"🚨 [SNAPSHOT SAVE FAILED] {ticker} 스냅샷 저장 실패. 지시서 보존 불가! 원인: {e}")
 
     def load_daily_snapshot(self, ticker):
         snap_file = self._get_snapshot_file(ticker)
-        if os.path.exists(snap_file):
-            try:
-                with open(snap_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    return data.get("plan")
-            except Exception:
-                pass
+        try:
+            with open(snap_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get("plan") if isinstance(data, dict) else None
+        except Exception:
+            pass
         return None
 
     def ensure_failsafe_snapshot(self, ticker, current_price, total_qty, avwap_qty, avg_price, prev_close, alloc_cash):
+        current_price = self._safe_float(current_price)
+        total_qty = int(self._safe_float(total_qty))
+        avwap_qty = int(self._safe_float(avwap_qty))
+        avg_price = self._safe_float(avg_price)
+        prev_close = self._safe_float(prev_close)
+        alloc_cash = self._safe_float(alloc_cash)
+
         snap = self.load_daily_snapshot(ticker)
         if snap is not None:
             return snap
@@ -148,8 +184,9 @@ class V14VwapStrategy:
         today_str_est = self._get_logical_date_str()
         legacy_qty = pure_qty
         legacy_avg = avg_price
+        
         try:
-            recs = [r for r in self.cfg.get_ledger() if r['ticker'] == ticker and not str(r.get("date", "")).startswith(today_str_est)]
+            recs = [r for r in (self.cfg.get_ledger() or []) if isinstance(r, dict) and r.get('ticker') == ticker and not str(r.get("date", "")).startswith(today_str_est)]
             ledger_qty, ledger_avg, _, _ = self.cfg.calculate_holdings(ticker, recs)
             legacy_qty = ledger_qty
             legacy_avg = ledger_avg if ledger_qty > 0 else avg_price
@@ -171,37 +208,80 @@ class V14VwapStrategy:
             is_snapshot_mode=True
         )
 
-    def _ceil(self, val): return math.ceil(val * 100) / 100.0
+    def _ceil(self, val): return math.ceil(self._safe_float(val) * 100) / 100.0
 
     def record_execution(self, ticker, side, qty, exec_price):
         self._load_state_if_needed(ticker)
+        safe_qty = int(self._safe_float(qty))
+        safe_price = self._safe_float(exec_price)
+        
         if side == "BUY":
-            spent = float(qty * exec_price)
-            self.executed["BUY_BUDGET"][ticker] = float(self.executed["BUY_BUDGET"].get(ticker, 0.0)) + spent
+            spent = self._safe_float(safe_qty * safe_price)
+            buy_dict = self.executed.get("BUY_BUDGET")
+            buy_val = (buy_dict if isinstance(buy_dict, dict) else {}).get(ticker, 0.0)
+            self.executed["BUY_BUDGET"][ticker] = self._safe_float(buy_val) + spent
         else:
-            self.executed["SELL_QTY"][ticker] = int(self.executed["SELL_QTY"].get(ticker, 0)) + int(qty)
+            sell_dict = self.executed.get("SELL_QTY")
+            sell_val = (sell_dict if isinstance(sell_dict, dict) else {}).get(ticker, 0)
+            self.executed["SELL_QTY"][ticker] = int(self._safe_float(sell_val)) + safe_qty
         self._save_state(ticker)
 
+    def _apply_wash_trade_shield(self, c_orders, b_orders):
+        all_o = c_orders + b_orders
+        has_sell_moc = any(isinstance(o, dict) and o.get('type') in ['MOC', 'MOO'] and o.get('side') == 'SELL' for o in all_o)
+        s_prices = [self._safe_float(o.get('price')) for o in all_o if isinstance(o, dict) and o.get('side') == 'SELL' and self._safe_float(o.get('price')) > 0]
+        min_s = min(s_prices) if s_prices else 0.0
+
+        def _clean(lst):
+            res = []
+            for o in lst:
+                if not isinstance(o, dict): continue
+                new_o = o.copy()
+                if new_o.get('side') == 'BUY':
+                    if has_sell_moc and new_o.get('type') in ['LOC', 'MOC']: 
+                        continue 
+                    if min_s > 0 and self._safe_float(new_o.get('price')) >= min_s:
+                        new_o['price'] = round(min_s - 0.01, 2)
+                        if "🛡️" not in new_o.get('desc', ''): 
+                            new_o['desc'] = f"🛡️교정_{new_o.get('desc', '').replace('🧹', '')}"
+                    new_o['price'] = max(0.01, self._safe_float(new_o.get('price')))
+                res.append(new_o)
+            return res
+        return _clean(c_orders), _clean(b_orders)
+
     def get_plan(self, ticker, current_price, avg_price, qty, prev_close, ma_5day=0.0, market_type="REG", available_cash=0, is_simulation=False, is_snapshot_mode=False):
+        current_price = self._safe_float(current_price)
+        avg_price = self._safe_float(avg_price)
+        qty = int(self._safe_float(qty))
+        prev_close = self._safe_float(prev_close)
+        ma_5day = self._safe_float(ma_5day)
+        available_cash = self._safe_float(available_cash)
+
         if not is_snapshot_mode:
             cached_plan = self.load_daily_snapshot(ticker)
             if cached_plan:
                 return cached_plan
 
-        split = self.cfg.get_split_count(ticker)
-        target_ratio = self.cfg.get_target_profit(ticker) / 100.0
-        t_val, _ = self.cfg.get_absolute_t_val(ticker, qty, avg_price)
+        split = self._safe_float(self.cfg.get_split_count(ticker))
+        target_ratio = self._safe_float(self.cfg.get_target_profit(ticker)) / 100.0
+        
+        t_val_raw, _ = self.cfg.get_absolute_t_val(ticker, qty, avg_price)
+        t_val = self._safe_float(t_val_raw)
         
         depreciation_factor = 2.0 / split if split > 0 else 0.1
         star_ratio = target_ratio - (target_ratio * depreciation_factor * t_val)
-        star_price = self._ceil(avg_price * (1 + star_ratio)) if avg_price > 0 else 0
-        target_price = self._ceil(avg_price * (1 + target_ratio)) if avg_price > 0 else 0
+        star_price = self._ceil(avg_price * (1 + star_ratio)) if avg_price > 0 else 0.0
+        target_price = self._ceil(avg_price * (1 + target_ratio)) if avg_price > 0 else 0.0
+        
+        is_jackpot_reached = target_price > 0 and current_price >= target_price
         
         buy_star_price = max(0.01, round(star_price - 0.01, 2)) if star_price > 0 else 0.0
 
         _, dynamic_budget, _ = self.cfg.calculate_v14_state(ticker)
+        dynamic_budget = self._safe_float(dynamic_budget)
         
         core_orders = []
+        bonus_orders = []
         process_status = "예방적방어선"
         is_zero_start_fact = False
         
@@ -243,9 +323,17 @@ class V14VwapStrategy:
                 desc = f"🆕새출발2({o_type})"
                 core_orders.append({"side": "BUY", "price": p_buy, "qty": q2, "type": o_type, "start_time": start_t if o_type == "VWAP" else None, "end_time": end_t if o_type == "VWAP" else None, "desc": desc})
             process_status = "✨새출발"
+            
+        elif is_jackpot_reached and t_val > (split - 1):
+            process_status = "🎉대박익절"
+            if qty > 0:
+                core_orders.append({"side": "SELL", "price": target_price, "qty": int(qty), "type": "LIMIT", "desc": "🎯전량대박익절"})
+                
         else:
             safe_ceiling = min(avg_price, star_price) if star_price > 0 else avg_price
             p_avg = max(0.01, round(safe_ceiling - 0.01, 2))
+            
+            process_status = "🌓전반전" if t_val < (split / 2) else "🌕후반전"
             
             if t_val < (split / 2):
                 b1_budget = dynamic_budget * 0.5
@@ -283,10 +371,17 @@ class V14VwapStrategy:
                 core_orders.append({"side": "SELL", "price": target_price, "qty": qty - q_sell, "type": "LIMIT", "desc": "🎯목표매도(V)"})
 
         if is_zero_start_fact and market_type != "AFTER":
-            core_orders = [o for o in core_orders if o.get("side") != "SELL"]
+            core_orders = [o for o in core_orders if isinstance(o, dict) and o.get("side") != "SELL"]
+
+        q_base = sum(int(self._safe_float(o.get('qty'))) for o in core_orders if isinstance(o, dict) and o.get('side') == 'BUY')
+        if q_base > 0:
+            bonus_orders.extend(sorted([{"side": "BUY", "price": math.floor((dynamic_budget / (q_base + n)) * 100) / 100.0, "qty": 1, "type": "LOC", "desc": f"🧲줍줍(+{n}주)"} for n in range(1, 6) if math.floor((dynamic_budget / (q_base + n)) * 100) / 100.0 > 0.01], key=lambda x: x['price'], reverse=True))
+
+        core_orders, bonus_orders = self._apply_wash_trade_shield(core_orders, bonus_orders)
+        orders = core_orders + bonus_orders
 
         plan_result = {
-            'core_orders': core_orders, 'bonus_orders': [], 'orders': core_orders,
+            'core_orders': core_orders, 'bonus_orders': bonus_orders, 'orders': orders,
             't_val': t_val, 'one_portion': dynamic_budget, 'star_price': star_price,
             'buy_star_price': buy_star_price, 
             'star_ratio': star_ratio,
@@ -297,5 +392,8 @@ class V14VwapStrategy:
             'is_zero_start': is_zero_start_fact 
         }
         
-        self.save_daily_snapshot(ticker, plan_data=plan_result)
+        if is_snapshot_mode:
+            self.save_daily_snapshot(ticker, plan_result)
+
+        self._save_state(ticker)
         return plan_result

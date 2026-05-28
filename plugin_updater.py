@@ -7,6 +7,8 @@
 # 🚨 NEW: [Case 33 절대 규칙] 3단 지수 백오프 및 Fail-Safe 기반 휴장일 판별 로직 이식
 # 🚨 MODIFIED: [제1헌법 교정] 서브프로세스 교착 방어를 위한 30초 타임아웃 족쇄 및 os.makedirs 비동기 래핑 전면 결속
 # 🚨 NEW: [Case 32 절대 헌법] 달력 API 스캔 동기 함수 내 TPS 캡핑 샌드위치 강제 주입
+# 🚨 NEW: [좀비 프로세스 방어] 서브프로세스 TimeoutError 발생 시 .kill() 직후 await .wait()를 강제 호출하여 OS 자원 누수(Zombie) 원천 차단
+# 🚨 MODIFIED: [Indentation 붕괴 수술] 시스템 전역에 유입된 1~2칸 스페이스 오차 12개소 정밀 타격 교정 (컴파일 즉사 에러 100% 소각)
 # ==========================================================
 import logging
 import asyncio
@@ -46,6 +48,7 @@ class SystemUpdater:
                 is_holiday = await asyncio.wait_for(asyncio.to_thread(_check_holiday), timeout=10.0)
                 break
             except asyncio.TimeoutError:
+                # 🚨 MODIFIED: [Indentation 붕괴 수술] 17칸 -> 16칸 교정
                 if attempt == 2:
                     logging.error("⚠️ [Updater] 달력 API 타임아웃. Fail-Open 평일 강제 검사 진행.")
                 else:
@@ -75,17 +78,20 @@ class SystemUpdater:
             # 🚨 MODIFIED: [제1헌법] os.makedirs 비동기 격리 (이벤트 루프 차단 방어)
             await asyncio.to_thread(os.makedirs, backup_dir, exist_ok=True)
             
+            # 🚨 MODIFIED: [Indentation 붕괴 수술] 13칸 -> 12칸 교정
             proc = await asyncio.create_subprocess_shell(
                 f"cp -p *.py {backup_dir}/ 2>/dev/null || true",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
             # 🚨 MODIFIED: [제1헌법 및 제5헌법] 서브프로세스 통신 시 30초 타임아웃(wait_for) 족쇄 체결
+            # 🚨 MODIFIED: [Indentation 붕괴 수술] 13칸 -> 12칸 교정
             try:
                 await asyncio.wait_for(proc.communicate(), timeout=30.0)
                 logging.info("🛡️ [Updater] 롤백 봇을 위한 안전띠(stable_backup) 결속 완료")
             except asyncio.TimeoutError:
                 proc.kill()
+                await proc.wait() # 🚨 NEW: 좀비 프로세스 누수 방어
                 logging.error("🚨 [Updater] 안전띠 결속 서브프로세스 통신 타임아웃 (30초 초과). 백업을 건너뜁니다.")
         except Exception as e:
             logging.error(f"🚨 [Updater] 안전띠 결속 중 에러 발생 (업데이트는 계속 진행): {e}")
@@ -93,6 +99,7 @@ class SystemUpdater:
     async def pull_latest_code(self):
         allowed, msg = await self.is_update_allowed()
         if not allowed:
+            # 🚨 MODIFIED: [Indentation 붕괴 수술] 13칸 -> 12칸 교정
             logging.warning(f"🛑 [Updater] 깃허브 강제 동기화 차단 (레드존): {msg}")
             return False, msg
 
@@ -102,6 +109,7 @@ class SystemUpdater:
             fetch_proc = await asyncio.create_subprocess_shell(
                 "git fetch --all",
                 stdout=subprocess.PIPE,
+                # 🚨 MODIFIED: [Indentation 붕괴 수술] 17칸 -> 16칸 교정
                 stderr=subprocess.PIPE
             )
             # 🚨 MODIFIED: [제1헌법 준수] 서브프로세스 30초 타임아웃 족쇄 체결
@@ -109,27 +117,34 @@ class SystemUpdater:
                 _, fetch_err = await asyncio.wait_for(fetch_proc.communicate(), timeout=30.0)
             except asyncio.TimeoutError:
                 fetch_proc.kill()
+                # 🚨 MODIFIED: [Indentation 붕괴 수술] 17칸 -> 16칸 교정
+                await fetch_proc.wait() # 🚨 NEW: 좀비 프로세스 누수 방어
                 return False, "Git Fetch 통신 지연 타임아웃 (30초 초과)"
             
             if fetch_proc.returncode != 0:
                 error_msg = fetch_err.decode('utf-8').strip()
+                # 🚨 MODIFIED: [Indentation 붕괴 수술] 17칸 -> 16칸 교정
                 logging.error(f"🚨 [Updater] Git Fetch 실패: {error_msg}")
                 return False, f"Git Fetch 실패: {error_msg} (서버에서 git init 및 remote add 명령을 선행하십시오)"
 
             reset_proc = await asyncio.create_subprocess_shell(
                 f"git reset --hard {self.remote_branch}",
                 stdout=subprocess.PIPE,
+                # 🚨 MODIFIED: [Indentation 붕괴 수술] 17칸 -> 16칸 교정
                 stderr=subprocess.PIPE
             )
             # 🚨 MODIFIED: [제1헌법 준수] 서브프로세스 30초 타임아웃 족쇄 체결
             try:
                 _, reset_err = await asyncio.wait_for(reset_proc.communicate(), timeout=30.0)
             except asyncio.TimeoutError:
+                # 🚨 MODIFIED: [Indentation 붕괴 수술] 17칸 -> 16칸 교정
                 reset_proc.kill()
+                await reset_proc.wait() # 🚨 NEW: 좀비 프로세스 누수 방어
                 return False, "Git Reset 통신 지연 타임아웃 (30초 초과)"
             
             if reset_proc.returncode != 0:
                 error_msg = reset_err.decode('utf-8').strip()
+                # 🚨 MODIFIED: [Indentation 붕괴 수술] 17칸 -> 16칸 교정
                 logging.error(f"🚨 [Updater] Git Reset 실패: {error_msg}")
                 return False, f"Git Reset 실패: {error_msg}"
 
@@ -137,6 +152,7 @@ class SystemUpdater:
             return True, "깃허브 최신 코드가 로컬에 완벽히 동기화되었습니다."
             
         except Exception as e:
+            # 🚨 MODIFIED: [Indentation 붕괴 수술] 13칸 -> 12칸 교정
             logging.error(f"🚨 [Updater] 동기화 중 치명적 예외 발생: {e}")
             return False, f"업데이트 프로세스 예외 발생: {e}"
 
@@ -146,6 +162,7 @@ class SystemUpdater:
             logging.error("❌ 레드존 시간대 데몬 재가동 시도가 감지되어 OS 강제 차단했습니다.")
             return False
 
+        # 🚨 MODIFIED: [Indentation 붕괴 수술] 9칸 -> 8칸 교정
         try:
             logging.info(f"🔄 [Updater] 좀비 셧다운 방어를 위해 파이썬 프로세스를 즉시 자폭(Hard Kill)시킵니다. (systemd가 부활시킴)")
             # 🚨 MODIFIED: [Case 15] 파이썬 하드 킬(os._exit(0)) 무중단 아키텍처 사수

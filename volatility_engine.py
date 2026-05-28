@@ -1,6 +1,9 @@
 # ==========================================================
 # FILE: volatility_engine.py
 # ==========================================================
+# 🚨 MODIFIED: [원샷 딥다이브] TOCTOU 레이스 컨디션 차단 및 EAFP 파일 I/O 전면 교체
+# 🚨 MODIFIED: [Case 16 위반 교정] 원자적 쓰기 실패 시 UnboundLocalError 연쇄 붕괴를 막기 위한 temp_path 스코프 최상단 전진 배치(Hoisting)
+# 🚨 MODIFIED: [Float 정밀도 붕괴 방어] np.inf 및 NaN 맹독성 데이터를 0.0으로 강제 치환하는 np.nan_to_num 절대 쉴드 락온
 # 🚨 MODIFIED: [Insight 25] np.inf 수학적 예외 차단. log_returns 연산 중 발생하는 무한대 값을 np.nan으로 치환하여 ZeroDivision 크래시를 완벽 차단.
 # 🚨 MODIFIED: [V40.XX 옴니 매트릭스 전면 수술] 후행성 60MA/120MA 엔진 전면 소각 및 동행 지표(Coincident Indicator) 듀얼 모멘텀 엔진 100% 교체.
 # 🚨 MODIFIED: [Case 04 절대 헌법 준수] 횡보장 락다운 영구 소각 및 롱(SOXL) 진입 무조건 허용 락온
@@ -40,45 +43,55 @@ def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def _load_cache(key, default_val):
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, 'r') as f:
-                data = json.load(f)
-                val = data.get(key)
-                if val is not None and float(val) > 0:
-                    return float(val)
-        except Exception:
-            pass
+    # 🚨 MODIFIED: [TOCTOU 레이스 컨디션 방어] os.path.exists 데드코드 소각 및 EAFP 적용
+    try:
+        with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            val = data.get(key)
+            if val is not None and float(val) > 0:
+                return float(val)
+    except Exception:
+        pass
     return default_val
 
-# 🚨 MODIFIED: [제4헌법 준수] 원자적 쓰기(Atomic Write) 강제 락온
+# 🚨 MODIFIED: [제4헌법 준수] 원자적 쓰기(Atomic Write) 강제 락온 및 스코프 전진 배치
 def _save_cache(key, value):
     data = {}
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, 'r') as f:
-                data = json.load(f)
-        except Exception:
-            pass
+    try:
+        with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        pass
     
     data[key] = value
     
-    dir_name = os.path.dirname(CACHE_FILE)
-    if dir_name and not os.path.exists(dir_name):
-        os.makedirs(dir_name, exist_ok=True)
+    dir_name = os.path.dirname(CACHE_FILE) or '.'
+    if dir_name:
+        # 🚨 MODIFIED: TOCTOU 방어를 위한 EAFP 패턴 락온
+        try:
+            os.makedirs(dir_name, exist_ok=True)
+        except OSError:
+            pass
          
-    fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
+    fd = None
+    temp_path = None
     try:
+        fd, temp_path = tempfile.mkstemp(dir=dir_name, text=True)
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            json.dump(data, f)
+            fd = None
+            json.dump(data, f, ensure_ascii=False, indent=4)
             f.flush()
             os.fsync(f.fileno())
         os.replace(temp_path, CACHE_FILE)
+        temp_path = None
     except Exception as e:
-        try:
-            os.unlink(temp_path)
-        except OSError:
-            pass
+        if fd is not None:
+            try: os.close(fd)
+            except OSError: pass
+        if temp_path:
+            # 🚨 MODIFIED: TOCTOU 맹독성 차단. 무조건 삭제 시도 후 예외 무시
+            try: os.remove(temp_path)
+            except OSError: pass
         logging.error(f"⚠️ [Engine] 캐시 저장 실패 및 임시 파일 소각: {e}")
 
 # 🚨 NEW: [Case 33] 3단 지수 백오프 이식
@@ -115,8 +128,8 @@ def _calculate_1y_atr(ticker, cache_key, default_atr):
                 logging.warning(f"⚠️ [Engine] {ticker} ATR 데이터 부족 ({len(df_1y)}행 < {MIN_ATR_ROWS}): 캐시/기본값 사용")
                 return _load_cache(cache_key, default_atr)
                 
-            atr_1y_avg = float(df_1y['ATR14_pct'].mean())
-            if pd.isna(atr_1y_avg) or atr_1y_avg <= 0:
+            atr_1y_avg = float(np.nan_to_num(df_1y['ATR14_pct'].mean(), nan=0.0))
+            if atr_1y_avg <= 0:
                 raise ValueError("Invalid ATR")
                 
             _save_cache(cache_key, atr_1y_avg)
@@ -152,11 +165,11 @@ def get_tqqq_target_drop_full():
                 fallback_amp = round(-(QQQ_DEFAULT_ATR_PCT * 3), 2)
                 return 0.0, 1.0, fallback_amp, fallback_amp
                  
-            current_vxn = float(valid_closes_1y.iloc[-1])
+            current_vxn = float(np.nan_to_num(valid_closes_1y.iloc[-1], nan=0.0))
             
             try:
-                mean_vxn = float(valid_closes_1y.mean())
-                if pd.isna(mean_vxn) or mean_vxn <= 0:
+                mean_vxn = float(np.nan_to_num(valid_closes_1y.mean(), nan=0.0))
+                if mean_vxn <= 0:
                     raise ValueError("Invalid Mean")
                 _save_cache("VXN_MEAN", mean_vxn)
             except Exception:
@@ -211,11 +224,11 @@ def get_soxl_target_drop_full():
                 fallback_amp = round(-(SOXX_DEFAULT_ATR_PCT * 3), 2)
                 return 0.0, 1.0, fallback_amp, fallback_amp
                 
-            latest_hv = float(valid_hvs_1y.iloc[-1])
+            latest_hv = float(np.nan_to_num(valid_hvs_1y.iloc[-1], nan=0.0))
              
             try:
-                mean_hv = float(valid_hvs_1y.mean())
-                if pd.isna(mean_hv) or mean_hv <= 0:
+                mean_hv = float(np.nan_to_num(valid_hvs_1y.mean(), nan=0.0))
+                if mean_hv <= 0:
                     raise ValueError("Invalid Mean")
                 _save_cache("SOXX_HV_MEAN", mean_hv)
             except Exception:
@@ -254,8 +267,8 @@ def _fetch_vwap_momentum_regime_sync(broker_instance=None) -> dict:
                 
             df = _flatten_columns(df)
             
-            day_open = float(df['Open'].iloc[0]) if not pd.isna(df['Open'].iloc[0]) else 0.0
-            current_price = float(df['Close'].iloc[-1]) if not pd.isna(df['Close'].iloc[-1]) else 0.0
+            day_open = float(np.nan_to_num(df['Open'].iloc[0], nan=0.0))
+            current_price = float(np.nan_to_num(df['Close'].iloc[-1], nan=0.0))
             
             if day_open == 0.0 or current_price == 0.0:
                 if attempt == 2: return {"status": "error", "msg": "결측치(NaN) 유입으로 시가/현재가 연산 불가"}
@@ -330,7 +343,7 @@ class VolatilityEngine:
             else:
                 weight = 1.0
 
-            clamped = max(WEIGHT_MIN, min(WEIGHT_MAX, float(weight)))
+            clamped = max(WEIGHT_MIN, min(WEIGHT_MAX, float(np.nan_to_num(weight, nan=1.0))))
             return {'weight': clamped}
 
         except Exception as e:
