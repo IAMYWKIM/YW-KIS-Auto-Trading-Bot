@@ -2,6 +2,7 @@
 # FILE: telegram_sync_engine.py
 # ==========================================================
 # 🚨 VERIFIED: [최종 무결점 판정] 5대 헌법 및 34대 엣지 케이스 완벽 결속 교차 검증 완료. 시스템 런타임 즉사 뇌관 잔존율 0%.
+# 🚨 NEW: [Blueprint 4] V-REV 자체 슬라이싱 엔진(15:27~15:56 EST) 가동으로 인해 다분할(Slice) 체결된 내역들을 합산(Sum)하여 정확한 가중평균 체결 단가(VWAP)를 산출하는 로직 정밀 락온 완료
 # 🚨 MODIFIED: [메모리 오염 뇌관 궁극 소각] context.bot_data 하위 메모리 탐색 시 다른 플러그인에 의해 문자열/리스트로 오염되었을 경우 발생하는 AttributeError 즉사 버그를 막기 위해 isinstance 3중 필터링 락온.
 # 🚨 MODIFIED: [인스턴스 증발 방어] queue_ledger 메서드 호출 전 getattr 쉴드를 주입하여, 클래스 로드 실패 시에도 스케줄러가 붕괴하지 않도록 안전 폴백(Silent Survival) 락온.
 # 🚨 MODIFIED: [NaN 맹독 전이 및 JSON 직렬화 붕괴 원천 차단] 졸업 정산 시 모든 재무 데이터에 self._safe_float() 정화 필터 강제 락온. NaN/Inf 유입으로 인한 json.dump 파괴 영구 소각.
@@ -16,6 +17,8 @@
 # 🚨 MODIFIED: [수익률 뻥튀기 팩트 수술] 잔고 0주 동기화 시 수동 매도 단가(actual_clear_price_calib) 100% 미러링을 통한 Zero-Sum 멱등성 사수.
 # 🚨 MODIFIED: [평단가 오염 원천 차단] V-REV 모드 시 KIS 원장 평단가 즉시 폐기 및 LIFO 큐 장부 기반 '순수 지층 평단가' 강제 오버라이드.
 # 🚨 MODIFIED: [제2헌법 준수] process_auto_sync 하단부 도달 불가능한 데드코드 영구 소각 및 파일 스캔 동기 차단(EAFP 락온).
+# 🚨 MODIFIED: [수량 Typo 교정] UI 렌더링 시 v_rev_q_qty에 지층 개수(lots)가 할당되던 변수 매핑 치명적 오류 팩트 교정 완료.
+# 🚨 MODIFIED: [V-REV 평단가 디커플링] KIS 평단가를 V-REV 큐 장부 통합 평단가로 100% 덮어쓰도록 리앵커링 수술 완료.
 # ==========================================================
 import logging
 import datetime
@@ -295,6 +298,7 @@ class TelegramSyncEngine:
                         
                         actual_clear_price_calib = 0.0
                         if target_execs:
+                            # 🚨 NEW: [Blueprint 4] V-REV 매도(SELL) 1분 슬라이싱 다중 체결 합산 엔진 락온
                             sell_execs_calib = [ex for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01"]
                             if sell_execs_calib:
                                 tot_amt_calib = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in sell_execs_calib)
@@ -307,6 +311,7 @@ class TelegramSyncEngine:
                                 recent_sells.sort(key=lambda x: f"{x.get('ord_dt') or ''}{x.get('ord_tmd') or ''}", reverse=True)
                                 last_sell_dt = recent_sells[0].get('ord_dt')
                                 same_day_sells = [ex for ex in recent_sells if ex.get('ord_dt') == last_sell_dt]
+                                # 🚨 NEW: [Blueprint 4] 로컬 VWAP 합산 보호
                                 tot_amt = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in same_day_sells)
                                 tot_q = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in same_day_sells)
                                 if tot_q > 0: actual_clear_price_calib = round(tot_amt / tot_q, 4)
@@ -325,11 +330,11 @@ class TelegramSyncEngine:
                         else:
                             calib_price = actual_avg if actual_avg > 0 else temp_sim_avg
                             calib_avg = actual_avg if actual_avg > 0 else temp_sim_avg
-                        
+            
                         calib_item = {'date': target_ledger_str, 'side': calib_side, 'qty': abs(gap_qty), 'price': calib_price, 'avg_price': calib_avg, 'exec_id': f"CALIB_{int(time.time())}", 'desc': "비파괴 보정"}
                         if is_rev: calib_item['is_reverse'] = True
                         new_target_records.append(calib_item)
-                        
+                         
                         if new_target_records:
                             if actual_qty > 0:
                                 for r in new_target_records: r['avg_price'] = actual_avg
@@ -415,6 +420,7 @@ class TelegramSyncEngine:
                             tot_q = 0
                             
                             if target_execs:
+                                # 🚨 NEW: [Blueprint 4] V-REV 매도(SELL) 1분 슬라이싱 다중 체결 합산 엔진 락온
                                 sell_execs = [ex for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01"]
                                 if sell_execs:
                                     tot_amt = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in sell_execs)
@@ -430,6 +436,7 @@ class TelegramSyncEngine:
                                         recent_sells.sort(key=lambda x: f"{x.get('ord_dt') or ''}{x.get('ord_tmd') or ''}", reverse=True)
                                         last_sell_dt = recent_sells[0].get('ord_dt')
                                         same_day_sells = [ex for ex in recent_sells if ex.get('ord_dt') == last_sell_dt]
+                                        # 🚨 NEW: [Blueprint 4] 로컬 VWAP 합산 보호
                                         tot_amt = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in same_day_sells)
                                         tot_q = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in same_day_sells)
                                         if tot_q > 0: actual_clear_price = round(tot_amt / tot_q, 4)
@@ -459,7 +466,7 @@ class TelegramSyncEngine:
                                             derived_price = pure_manual_amt / pure_manual_q
                                             missing_price = round(derived_price, 4)
                                         else: missing_price = round(b_tot_amt / b_tot_q, 4)
-                                        
+                            
                                 q_data_before.append({"date": now_est.strftime('%Y-%m-%d %H:%M:%S'), "qty": missing_qty, "price": missing_price, "exec_id": "MANUAL_SYNC"})
                                 vrev_ledger_qty = tot_q
                                 await asyncio.to_thread(self.queue_ledger.overwrite_queue, ticker, q_data_before)
@@ -477,7 +484,7 @@ class TelegramSyncEngine:
                                 except Exception:
                                     if attempt == 2: curr_p = 0.0
                                     else: await asyncio.sleep(1.0 * (2**attempt))
-                               
+                            
                             clear_price = actual_clear_price if actual_clear_price > 0.0 else (curr_p if curr_p and curr_p > 0 else q_avg_price * 1.006)
                             snapshot = await asyncio.to_thread(self.strategy.capture_vrev_snapshot, ticker, clear_price, q_avg_price, vrev_ledger_qty)
                             
@@ -490,7 +497,7 @@ class TelegramSyncEngine:
                                     added_seed = realized_pnl * compound_rate
                                     current_seed = self._safe_float(await asyncio.to_thread(self.cfg.get_seed, ticker))
                                     await asyncio.to_thread(self.cfg.set_seed, ticker, current_seed + added_seed)
-                                   
+                                    
                                 cap_dt = snapshot.get('captured_at', now_est)
                                 cap_dt_str = cap_dt if isinstance(cap_dt, str) else cap_dt.strftime('%Y-%m-%d')
                                 
@@ -498,7 +505,7 @@ class TelegramSyncEngine:
                                 
                                 hist_data = await asyncio.to_thread(self.cfg._load_json, self.cfg.FILES["HISTORY"], [])
                                 if not isinstance(hist_data, list): hist_data = []
-                                
+                    
                                 new_hist = {
                                     "id": int(time.time()), "ticker": ticker, "start_date": start_dt_str, "end_date": cap_dt_str[:10],
                                     "invested": self._safe_float(total_invested), "revenue": self._safe_float(total_invested + realized_pnl),
@@ -514,7 +521,7 @@ class TelegramSyncEngine:
                             
                         if getattr(self, 'queue_ledger', None):
                             await asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, 0)
-                        
+                         
                         if _vrev_snap_ok:
                             msg = f"🎉 <b>[{html.escape(str(ticker))} V-REV 잭팟 스윕(전량 익절) 감지!]</b>\n▫️ 잔고가 0주가 되어 LIFO 큐 지층을 100% 소각(초기화)했습니다."
                             if added_seed > 0: msg += f"\n💸 <b>자동 복리 +${added_seed:,.0f}</b> 이 다음 운용 시드에 완벽하게 추가되었습니다!"
@@ -585,22 +592,24 @@ class TelegramSyncEngine:
 
                             actual_clear_price_for_sync = 0.0
                             if target_execs:
+                                # 🚨 NEW: [Blueprint 4] V-REV 매도 1분 슬라이싱 합산 락온
                                 sell_execs_sync = [ex for ex in target_execs if ex.get('sll_buy_dvsn_cd') == "01"]
                                 if sell_execs_sync:
                                     t_amt = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in sell_execs_sync)
                                     t_q = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) for ex in sell_execs_sync)
                                     if t_q > 0: actual_clear_price_for_sync = round(t_amt / t_q, 4)
-                            
+                             
                             calibrated = False
                             if getattr(self, 'queue_ledger', None):
                                 calibrated = await asyncio.to_thread(self.queue_ledger.sync_with_broker, ticker, adjusted_actual_qty, 0.0, actual_clear_price_for_sync)
-                            
+                             
                             if calibrated: await context.bot.send_message(chat_id, f"🔧 <b>[{html.escape(str(ticker))}] V-REV 큐(Queue) 비파괴 보정 및 리앵커링 완료!</b>\n▫️ 수동 매도 물량(<b>{gap_qty}주</b>)을 LIFO 큐에서 안전하게 차감하고, 수익금만큼 잔여 지층의 평단가를 일괄 차감했습니다.", parse_mode='HTML')
                              
                         elif adjusted_actual_qty > 0 and adjusted_actual_qty > vrev_ledger_qty:
                             gap_qty = adjusted_actual_qty - vrev_ledger_qty
                             real_buy_price = actual_avg
                             try:
+                                # 🚨 NEW: [Blueprint 4] V-REV 매수 1분 슬라이싱 합산 락온
                                 buy_execs = [ex for ex in (target_execs or []) if ex.get('sll_buy_dvsn_cd') == "02"]
                                 if buy_execs:
                                     b_tot_amt = sum(int(self._safe_float(ex.get('ft_ccld_qty'))) * self._safe_float(ex.get('ft_ccld_unpr3')) for ex in buy_execs)
@@ -624,7 +633,7 @@ class TelegramSyncEngine:
                                 for attempt in range(3):
                                     try:
                                         await asyncio.sleep(0.06)
-                                        curr_p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=10.0)
+                                        curr_p_val = await asyncio.wait_for(asyncio.to_thread(self.broker.get_current_price, ticker), timeout=15.0)
                                         curr_p = self._safe_float(curr_p_val)
                                         break
                                     except Exception:
@@ -745,7 +754,7 @@ class TelegramSyncEngine:
                 report += f"{idx:<3} {date} {side} ${avg_prc:<6.2f} {tot_qty}주\n"
                 idx += 1
                 
-            report += "-"*30 + "</code>\n"
+            report += "-"*30 + "</code>\n\n"
              
         safe_holdings = pre_fetched_holdings if isinstance(pre_fetched_holdings, dict) else {}
         actual_qty = int(self._safe_float((safe_holdings.get(ticker) or {'qty': 0}).get('qty')))
@@ -808,3 +817,433 @@ class TelegramSyncEngine:
         else:
             try: await context.bot.send_message(chat_id, msg, reply_markup=markup, parse_mode='HTML')
             except Exception: pass
+
+    async def _render_ticker_data_list(self, sorted_tickers, cash, allocated_cash, holdings, status_code, tracking_cache, context):
+        ticker_data_list = []
+        total_buy_needed = 0.0
+        
+        for t in sorted_tickers:
+            await asyncio.sleep(0.06) 
+            try:
+                is_avwap_active = False
+                avwap_budget = 0.0
+                avwap_qty = 0
+                avwap_avg = 0.0
+                avwap_status_txt = "OFF"
+                avwap_strikes = 0
+                avwap_base_ticker = "N/A"
+                avwap_base_price = 0.0
+                avwap_base_vwap = 0.0
+                avwap_prev_vwap = 0.0
+                avwap_rolling_tp = 0.0
+                avwap_gap_pct = 0.0
+
+                h = holdings.get(t, {'qty':0, 'avg':0}) if isinstance(holdings, dict) else {'qty':0, 'avg':0}
+                if not isinstance(h, dict): h = {'qty':0, 'avg':0}
+                
+                async def _retry_call(func, *args, **kwargs):
+                    for attempt in range(3):
+                        try:
+                            await asyncio.sleep(0.06)
+                            return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=15.0)
+                        except Exception:
+                            if attempt == 2: return None
+                            await asyncio.sleep(1.0 * (2 ** attempt))
+
+                curr = await _retry_call(self.broker.get_current_price, t, is_market_closed=(status_code == "CLOSE"))
+                curr = self._safe_float(curr)
+                
+                prev_close = await _retry_call(self.broker.get_previous_close, t)
+                prev_close = self._safe_float(prev_close)
+                
+                ma_5day = await _retry_call(self.broker.get_5day_ma, t)
+                ma_5day = self._safe_float(ma_5day)
+                
+                d_hl = await _retry_call(self.broker.get_day_high_low, t)
+                if isinstance(d_hl, (list, tuple)) and len(d_hl) >= 2:
+                    day_high, day_low = self._safe_float(d_hl[0]), self._safe_float(d_hl[1])
+                else:
+                    day_high, day_low = 0.0, 0.0
+            
+                actual_avg = self._safe_float(h.get('avg', 0.0))
+                actual_qty = int(self._safe_float(h.get('qty', 0)))
+                
+                safe_prev_close = prev_close if prev_close else 0.0
+                
+                if status_code in ["AFTER", "CLOSE", "PRE"]:
+                    try:
+                        def get_yf_close():
+                            time.sleep(0.06)
+                            df = yf.Ticker(t).history(period="5d", interval="1d", timeout=5.0)
+                            if not df.empty and 'Close' in df.columns and len(df['Close']) > 0:
+                                val = self._safe_float(df['Close'].iloc[-1])
+                                return val if val > 0 else None
+                            return None
+                
+                        yf_close = None
+                        for attempt in range(3):
+                            try:
+                                await asyncio.sleep(0.06)
+                                yf_close = await asyncio.wait_for(asyncio.to_thread(get_yf_close), timeout=10.0)
+                                break
+                            except Exception:
+                                if attempt == 2: pass
+                                else: await asyncio.sleep(1.0 * (2 ** attempt))
+                        if yf_close and yf_close > 0:
+                            safe_prev_close = yf_close
+                    except Exception as e:
+                        logging.debug(f"YF 정규장 종가 롤오버 스캔 실패 ({t}): {e}")
+
+                if status_code == "CLOSE":
+                    curr = safe_prev_close
+
+                idx_ticker = "SOXX" if t == "SOXL" else "QQQ"
+                dynamic_pct_obj = await _retry_call(self.broker.get_dynamic_sniper_target, index_ticker=idx_ticker)
+                
+                dynamic_pct = self._safe_float(getattr(dynamic_pct_obj, 'base_amp', 0.0)) if hasattr(dynamic_pct_obj, 'base_amp') else (8.79 if t == "SOXL" else 4.95)
+                if dynamic_pct == 0.0: dynamic_pct = (8.79 if t == "SOXL" else 4.95)
+                
+                tracking_status = tracking_cache.get(t, {})
+                if not isinstance(tracking_status, dict): tracking_status = {}
+                current_day_high = self._safe_float(tracking_status.get('day_high', day_high)) 
+                hybrid_target_price = current_day_high * (1 - (abs(dynamic_pct) / 100.0))
+                trigger_reason = f"-{abs(dynamic_pct)}%"
+                
+                is_locked_reg = await asyncio.to_thread(self.cfg.check_lock, t, "REG")
+                is_locked_sniper = await asyncio.to_thread(self.cfg.check_lock, t, "SNIPER")
+                is_already_ordered = is_locked_reg or is_locked_sniper
+                 
+                ver = await asyncio.to_thread(self.cfg.get_version, t)
+                
+                try:
+                    is_manual_vwap = await asyncio.to_thread(getattr(self.cfg, 'get_manual_vwap_mode', lambda x: False), t)
+                except Exception:
+                    is_manual_vwap = False
+                
+                force_realtime = status_code in ["CLOSE", "AFTER"]
+                
+                cached_snap = None
+                if not force_realtime:
+                    if ver == "V_REV":
+                        cached_snap = await asyncio.to_thread(self.strategy.v_rev_plugin.load_daily_snapshot, t)
+                    elif ver == "V14":
+                         if is_manual_vwap:
+                            cached_snap = await asyncio.to_thread(self.strategy.v14_vwap_plugin.load_daily_snapshot, t)
+                         else:
+                            if hasattr(self.strategy, 'v14_plugin') and hasattr(self.strategy.v14_plugin, 'load_daily_snapshot'):
+                                cached_snap = await asyncio.to_thread(self.strategy.v14_plugin.load_daily_snapshot, t)
+                
+                if not isinstance(cached_snap, dict): cached_snap = None
+        
+                if dynamic_pct_obj and hasattr(dynamic_pct_obj, 'metric_val'):
+                    real_val = self._safe_float(dynamic_pct_obj.metric_val)
+                else:
+                    real_val = 0.0
+                vol_status = "ON" if real_val >= 20.0 else "OFF"
+
+                logic_qty = actual_qty
+                is_zero_start_fact = (actual_qty == 0)
+                if cached_snap:
+                    if actual_qty == 0:
+                        logic_qty = 0
+                        is_zero_start_fact = True
+                    else:
+                        if "total_q" in cached_snap:
+                            logic_qty = int(self._safe_float(cached_snap.get("total_q", 0)))
+                        elif "initial_qty" in cached_snap:
+                            logic_qty = int(self._safe_float(cached_snap.get("initial_qty", 0)))
+                        is_zero_start_fact = bool(cached_snap.get("is_zero_start", logic_qty == 0))
+
+                try:
+                     jobs = context.job_queue.jobs() if context.job_queue else []
+                     job_data = jobs[0].data if jobs and len(jobs) > 0 and jobs[0].data is not None else {}
+                     regime_data = job_data.get('regime_data') if isinstance(job_data, dict) else None
+                except Exception:
+                    regime_data = None
+
+                plan = await asyncio.to_thread(
+                    self.strategy.get_plan,
+                    t, curr, actual_avg, logic_qty, safe_prev_close, ma_5day=ma_5day,
+                    market_type="REG", available_cash=allocated_cash.get(t, 0.0),
+                    is_simulation=True, regime_data=regime_data,
+                    is_snapshot_mode=force_realtime
+                )
+                if not isinstance(plan, dict): plan = {}
+                 
+                split = await asyncio.to_thread(self.cfg.get_split_count, t)
+                safe_seed = await asyncio.to_thread(self.cfg.get_seed, t)
+                
+                t_val = self._safe_float(plan.get('t_val', 0.0))
+                is_rev = plan.get('is_reverse', False)
+                
+                v_rev_q_qty = 0
+                v_rev_q_lots = 0
+                v_rev_guidance = ""
+                
+                l1_qty = 0
+                l1_price = 0.0
+
+                if ver == "V_REV":
+                    if not getattr(self, 'queue_ledger', None):
+                        from queue_ledger import QueueLedger
+                        self.queue_ledger = await asyncio.to_thread(QueueLedger)
+                   
+                    q_list = await asyncio.to_thread(self.queue_ledger.get_queue, t)
+                    if not isinstance(q_list, list): q_list = []
+                 
+                    v_rev_q_lots = len(q_list)
+                    v_rev_q_qty = sum(int(self._safe_float(item.get('qty', 0))) for item in q_list if isinstance(item, dict))
+                    
+                    if q_list:
+                        l1_qty = int(self._safe_float(q_list[-1].get('qty'))) if isinstance(q_list[-1], dict) else 0
+                        l1_price = self._safe_float(q_list[-1].get('price')) if isinstance(q_list[-1], dict) else 0.0
+
+                    one_portion_cash = safe_seed * 0.15
+                    plan['one_portion'] = one_portion_cash
+                    half_portion_cash = one_portion_cash * 0.5
+                
+                    tag = "VWAP" if is_manual_vwap else "LOC"
+                    
+                    snap_orders_raw = cached_snap.get("orders", []) if cached_snap else []
+                    if not isinstance(snap_orders_raw, list): snap_orders_raw = []
+                    snap_sells_for_ui = [o for o in snap_orders_raw if isinstance(o, dict) and o.get('side') == 'SELL']
+                    
+                    if cached_snap and snap_sells_for_ui and actual_qty > 0:
+                        for o in snap_sells_for_ui:
+                             desc_label = str(o.get('desc', '매도')).split('(')[0]
+                             v_rev_guidance += f" 🔵 {html.escape(desc_label)} ${self._safe_float(o.get('price')):.2f} <b>{int(self._safe_float(o.get('qty')))}주</b> ({tag})\n"
+                             
+                    elif q_list and actual_qty > 0:
+                        trigger_l1 = round(l1_price * 1.006, 2)
+                        
+                        valid_q_data = [item for item in q_list if isinstance(item, dict) and self._safe_float(item.get('price')) > 0]
+                        total_q = sum(int(self._safe_float(item.get("qty"))) for item in valid_q_data)
+                        total_inv = sum(self._safe_float(item.get('qty')) * self._safe_float(item.get('price')) for item in valid_q_data)
+                        q_avg_price = (total_inv / total_q) if total_q > 0 else 0.0
+                        
+                        # 🚨 MODIFIED: [V-REV 평단가 디커플링] KIS 평단가를 V-REV 큐 장부 기준으로 강제 리앵커링 락온
+                        if total_q > 0:
+                            actual_avg = round(q_avg_price, 4)
+                     
+                        upper_qty = total_q - l1_qty
+                        trigger_upper = round(q_avg_price * 1.010, 2) if upper_qty > 0 else 0.0
+                        
+                        available_l1 = min(l1_qty, actual_qty)
+                        available_upper = min(upper_qty, actual_qty - available_l1)
+                        
+                        sell_dict = {}
+                        if available_l1 > 0 and trigger_l1 > 0:
+                             sell_dict[trigger_l1] = sell_dict.get(trigger_l1, 0) + available_l1
+                        if available_upper > 0 and trigger_upper > 0:
+                            sell_dict[trigger_upper] = sell_dict.get(trigger_upper, 0) + available_upper
+                       
+                        for price in sorted(sell_dict.keys()):
+                            s_qty = sell_dict[price]
+                            
+                            if price == trigger_l1 and price == trigger_upper:
+                                desc_str = "통합탈출"
+                            elif price == trigger_l1:
+                                desc_str = "1층탈출"
+                            elif price == trigger_upper:
+                                  desc_str = "상위층탈출"
+                            else:
+                                desc_str = "잔여탈출"
+                            v_rev_guidance += f" 🔵 {desc_str} ${price:.2f} <b>{s_qty}주</b> ({tag})\n"
+                    else:
+                        v_rev_guidance += " 🔵 매도: 대기 물량 없음 (관망)\n"
+                   
+                    safe_anchor = l1_price if l1_price > 0.0 else safe_prev_close
+                    if safe_anchor > 0:
+                        b1_price = round(safe_prev_close * 1.15 if is_zero_start_fact else safe_anchor * 0.9976, 2)
+                        b2_price = round(safe_prev_close * 0.999 if is_zero_start_fact else safe_anchor * 0.9887, 2)
+                        
+                        b1_qty = math.floor(half_portion_cash / b1_price) if b1_price > 0 else 0
+                        b2_qty = math.floor(half_portion_cash / b2_price) if b2_price > 0 else 0
+                        
+                        if b1_qty > 0:
+                             v_rev_guidance += f" 🔴 매수1(Buy1) ${b1_price:.2f} <b>{b1_qty}주</b> ({tag})\n"
+                        if b2_qty > 0:
+                            v_rev_guidance += f" 🔴 매수2(Buy2) ${b2_price:.2f} <b>{b2_qty}주</b> ({tag})\n"
+                    else:
+                        v_rev_guidance += " 🔴 매수 대기: 타점 연산 대기 중\n"
+
+                is_avwap_hybrid_on = False
+                if hasattr(self.cfg, 'get_avwap_hybrid_mode'):
+                    is_avwap_hybrid_on = await asyncio.to_thread(self.cfg.get_avwap_hybrid_mode, t)
+
+                if is_avwap_hybrid_on:
+                    is_avwap_active = True
+                    avwap_qty = int(self._safe_float(tracking_cache.get(f"AVWAP_QTY_{t}", 0)))
+                    avwap_avg = self._safe_float(tracking_cache.get(f"AVWAP_AVG_{t}", 0.0))
+                    avwap_budget = cash
+                    avwap_strikes = int(self._safe_float(tracking_cache.get(f"AVWAP_STRIKES_{t}", 0)))
+
+                    if tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
+                        avwap_status_txt = "🛑 당일 영구동결 (SHUTDOWN)"
+                    elif tracking_cache.get(f"AVWAP_BOUGHT_{t}"):
+                        avwap_status_txt = "🎯 딥매수 완료 (익절/손절 감시중)"
+                    elif tracking_cache.get(f"AVWAP_COOLDOWN_{t}"):
+                        avwap_status_txt = "⏳ 자연 쿨다운 (VWAP 갭 회복 대기중)"
+                    else:
+                        avwap_status_txt = "👀 상승장 필터 스캔 및 갭 타점 대기"
+
+                    avwap_base_ticker = 'SOXX' if t == 'SOXL' else ('QQQ' if t == 'TQQQ' else t)
+                    
+                    avwap_ctx = tracking_cache.get(f"AVWAP_CTX_{t}")
+                    if not avwap_ctx:
+                         try:
+                             avwap_ctx = await _retry_call(self.strategy.v_avwap_plugin.fetch_macro_context, avwap_base_ticker)
+                             if avwap_ctx: tracking_cache[f"AVWAP_CTX_{t}"] = avwap_ctx
+                         except Exception: pass
+
+                    est = ZoneInfo('America/New_York')
+                    now_est = datetime.datetime.now(est)
+                    if status_code in ["PRE", "REG"] and not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
+                        try:
+                            df_1min_base = await _retry_call(self.broker.get_1min_candles_df, avwap_base_ticker)
+                            base_curr_p = await _retry_call(self.broker.get_current_price, avwap_base_ticker)
+                            base_curr_p = self._safe_float(base_curr_p)
+                            
+                            if hasattr(self.strategy, 'v_avwap_plugin'):
+                                avwap_state_dict = {"strikes": avwap_strikes, "cooldown_active": tracking_cache.get(f"AVWAP_COOLDOWN_{t}", False)}
+                                
+                                sortie_mode = "SINGLE"
+                                try:
+                                    sortie_mode = await asyncio.wait_for(asyncio.to_thread(getattr(self.cfg, 'get_avwap_sortie_mode', lambda x: "SINGLE"), t), timeout=5.0)
+                                except Exception: pass
+                                
+                                decision = await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        self.strategy.v_avwap_plugin.get_decision,
+                                        base_ticker=avwap_base_ticker, exec_ticker=t,
+                                        base_curr_p=base_curr_p, exec_curr_p=curr,
+                                        df_1min_base=df_1min_base, avwap_qty=avwap_qty,
+                                        avwap_alloc_cash=cash, 
+                                        now_est=now_est, avwap_state=avwap_state_dict,
+                                        context_data=avwap_ctx,
+                                        is_simulation=True,
+                                        amp5=self._safe_float(getattr(dynamic_pct_obj, 'base_amp', 0.0)) if hasattr(dynamic_pct_obj, 'base_amp') else 0.0,
+                                        prev_close=safe_prev_close,
+                                        ma_5day=ma_5day,
+                                        sortie_mode=sortie_mode
+                                    ),
+                                    timeout=10.0
+                                )
+                                if not isinstance(decision, dict): decision = {}
+                                
+                                avwap_base_price = decision.get('base_curr_p', base_curr_p)
+                                avwap_base_vwap = decision.get('vwap', 0.0)
+                                avwap_prev_vwap = decision.get('prev_vwap', 0.0)
+                                avwap_rolling_tp = decision.get('rolling_tp', 0.0)
+                                avwap_gap_pct = decision.get('gap_pct', 0.0)
+                                
+                                if "대기" in avwap_status_txt:
+                                    reason = decision.get('reason', '타점 계산중')
+                                    avwap_status_txt = f"⏳ 대기 ({reason})"
+                        except Exception as e:
+                            logging.error(f"🚨 [{t}] AVWAP 실시간 레이더 스캔 타임아웃/에러: {e}")
+
+                    if not tracking_cache.get(f"AVWAP_BOUGHT_{t}") and not tracking_cache.get(f"AVWAP_SHUTDOWN_{t}"):
+                        curr_time = now_est.time()
+                        time_0930 = datetime.time(9, 30)
+                        time_0934 = datetime.time(9, 34, 59)
+                        
+                        dump_jitter_sec = int(self._safe_float(tracking_cache.get(f"AVWAP_DUMP_JITTER_{t}", 0)))
+                        base_dump_dt = datetime.datetime.combine(now_est.date(), datetime.time(15, 20)).replace(tzinfo=ZoneInfo('America/New_York'))
+                        dynamic_dump_dt = base_dump_dt - datetime.timedelta(seconds=dump_jitter_sec)
+                        time_dynamic_dump = dynamic_dump_dt.time()
+              
+                        if curr_time < time_0930:
+                            avwap_status_txt = "⏳ 프리장 관측 중 (정규장 대기)"
+                        elif time_0930 <= curr_time <= time_0934:
+                            avwap_status_txt = "⏳ 캔들 형성 대기 중"
+                        elif curr_time >= time_dynamic_dump:
+                            avwap_status_txt = "⛔ 금일 감시 종료"
+
+                upward_sniper_mode_on = await asyncio.to_thread(self.cfg.get_upward_sniper_mode, t)
+                target_val = await asyncio.to_thread(self.cfg.get_target_profit, t)
+                avwap_gap_thresh_val = await asyncio.to_thread(getattr(self.cfg, 'get_avwap_gap_threshold', lambda x: -0.67), t) if is_avwap_active else -0.67
+                vrev_gap_switch_val = await asyncio.to_thread(getattr(self.cfg, 'get_vrev_gap_switching_mode', lambda x: False), t)
+                vrev_gap_thresh_val = await asyncio.to_thread(getattr(self.cfg, 'get_vrev_gap_threshold', lambda x: -0.67), t)
+
+                is_sniper_active_time = False
+                try:
+                    def _check_schedule_inner():
+                        time.sleep(0.06)
+                        nyse = mcal.get_calendar('NYSE')
+                        return nyse.schedule(start_date=now_est.date(), end_date=now_est.date())
+
+                    schedule_inner = None
+                    for attempt in range(3):
+                        try:
+                            schedule_inner = await asyncio.wait_for(asyncio.to_thread(_check_schedule_inner), timeout=10.0)
+                            break
+                        except Exception:
+                            if attempt == 2: pass
+                            else: await asyncio.sleep(1.0 * (2 ** attempt))
+                            
+                    if schedule_inner is not None and not schedule_inner.empty:
+                        market_open_inner = schedule_inner.iloc[0]['market_open'].astimezone(est)
+                        switch_time_inner = market_open_inner + datetime.timedelta(minutes=30)
+                        if now_est >= switch_time_inner:
+                            is_sniper_active_time = True
+                except Exception:
+                    if now_est.weekday() < 5 and now_est.time() >= datetime.time(10, 0):
+                        is_sniper_active_time = True
+
+                # 🚨 MODIFIED: [수량 Typo 팩트 교정] v_rev_q_lots 할당 뇌관 소각 및 v_rev_q_qty 매핑 정상화
+                ticker_data_list.append({
+                    'ticker': t, 'version': ver, 't_val': t_val, 'split': split, 'curr': curr, 'avg': actual_avg, 'qty': actual_qty,
+                    'profit_amt': (curr - actual_avg) * actual_qty if actual_qty > 0 else 0, 
+                    'profit_pct': (curr - actual_avg) / actual_avg * 100 if actual_avg > 0 else 0,
+                    'upward_sniper': "ON" if upward_sniper_mode_on else "OFF",
+                    'target': target_val, 'star_pct': round(self._safe_float(plan.get('star_ratio', 0.0)) * 100, 2),
+                    'seed': safe_seed, 'one_portion': self._safe_float(plan.get('one_portion', 0.0)), 'plan': plan,
+                    'is_locked': is_already_ordered, 'mode': "REG",
+                    'is_reverse': is_rev, 'star_price': self._safe_float(plan.get('star_price', 0.0)),
+                    'hybrid_target': hybrid_target_price,
+                    'trigger_reason': trigger_reason,
+                    'sniper_trigger': abs(self._safe_float(dynamic_pct)), 
+                    'day_high': day_high,
+                    'day_low': day_low,
+                    'prev_close': safe_prev_close,
+                    'tracking_info': tracking_status,
+                    'dynamic_obj': dynamic_pct_obj,
+                    'is_sniper_active_time': is_sniper_active_time,
+                    'vol_weight': round(real_val, 2), 
+                    'vol_status': vol_status,
+                    'v_rev_q_lots': v_rev_q_lots,
+                    'v_rev_q_qty': v_rev_q_qty,
+                    'v_rev_guidance': v_rev_guidance,
+                    'avwap_active': is_avwap_active,
+                    'avwap_budget': avwap_budget,
+                    'avwap_qty': avwap_qty,
+                    'avwap_avg': avwap_avg,
+                    'avwap_status': avwap_status_txt,
+                    'avwap_strikes': avwap_strikes,
+                    'avwap_base_ticker': avwap_base_ticker if is_avwap_active else 'N/A',
+                    'avwap_base_price': avwap_base_price if is_avwap_active else 0.0,
+                    'avwap_base_vwap': avwap_base_vwap if is_avwap_active else 0.0,
+                    'avwap_prev_vwap': avwap_prev_vwap if is_avwap_active else 0.0,
+                    'avwap_rolling_tp': avwap_rolling_tp if is_avwap_active else 0.0,
+                    'avwap_gap_pct': avwap_gap_pct if is_avwap_active else 0.0,
+                    'avwap_gap_thresh': avwap_gap_thresh_val,
+                    'vrev_gap_switch': vrev_gap_switch_val,
+                    'vrev_gap_thresh': vrev_gap_thresh_val,
+                    'is_manual_vwap': is_manual_vwap,
+                    'is_zero_start': is_zero_start_fact,
+                    'has_snapshot': bool(cached_snap)
+                })
+                
+                plan_orders_raw = plan.get('orders', [])
+                if not isinstance(plan_orders_raw, list): plan_orders_raw = []
+                
+                total_buy_needed += sum(
+                    self._safe_float(o.get('price')) * self._safe_float(o.get('qty'))
+                    for o in plan_orders_raw if isinstance(o, dict) and o.get('side') == 'BUY'
+                )
+            except Exception as e:
+                logging.error(f"🚨 [{t}] 개별 종목 지시서 연산 중 치명적 런타임 오류 발생 (해당 종목 격리): {e}")
+                continue
+
+        return ticker_data_list, total_buy_needed

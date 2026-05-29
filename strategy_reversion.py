@@ -12,6 +12,9 @@
 # 🚨 MODIFIED: [Insight 14] String-Float 콤마 맹독성 런타임 붕괴 방어용 `_safe_float` 래핑 전면 이식
 # 🚨 MODIFIED: [Insight 12] 큐 장부 오염 객체(Dirty Record) 방어용 `isinstance(item, dict)` 필터링 락온
 # 🚨 MODIFIED: [Insight 06/07] JSON 이중 get() 호출 시 발생하는 AttributeError 붕괴 방어용 `(dict or {})` 단락 평가 쉴드 주입
+# 🚨 NEW: [Case 20] KIS 서버 VWAP 알고리즘 10주 최소 수량 제약(10주 미만 시 LOC 강제 폴백) 데드코드 전면 소각. 자체 로컬 1분 슬라이싱 엔진은 수량 무관하게 쪼개기(Slicing)가 가능하므로 전량 'VWAP' 태그로 락온하여 섀도우 엔진에 100% 인계
+# 🚨 MODIFIED: [궁극의 Type-Safety 아머 결속] get_dynamic_plan 및 ensure_failsafe_snapshot 진입부의 모든 파라미터에 _safe_float 쉴드를 100% 강제 래핑하여 TypeError 런타임 붕괴 원천 봉쇄
+# 🚨 MODIFIED: [당일 지층 매수 앵커 최우선 락온] is_zero_start_session 조건을 해체하고 오직 실제 물량(total_q) 유무만을 기준으로 매수 앵커를 산출하도록 교정. 당일 연속 체결 시 허공 타점(1.15배수) 파괴 및 1지층 평단가 연계 100% 락온.
 # ==========================================================
 import math
 import os
@@ -29,8 +32,12 @@ class ReversionStrategy:
         self.state_loaded = {}
 
     def _safe_float(self, value):
-        try: return float(str(value or 0.0).replace(',', ''))
-        except Exception: return 0.0
+        try:
+            val = float(str(value or 0.0).replace(',', ''))
+            if math.isnan(val) or math.isinf(val): return 0.0
+            return val
+        except Exception: 
+            return 0.0
 
     def _get_logical_date_str(self):
         now_est = datetime.now(ZoneInfo('America/New_York'))
@@ -52,7 +59,7 @@ class ReversionStrategy:
         today_str = self._get_logical_date_str()
         if self.state_loaded.get(ticker) == today_str:
             return 
-            
+        
         state_file = self._get_state_file(ticker)
         # 🚨 MODIFIED: [TOCTOU 붕괴 방어] os.path.exists 동기 스캔 전면 소각 및 EAFP 적용
         try:
@@ -79,8 +86,8 @@ class ReversionStrategy:
             "date": today_str,
             "residual": {},
             "executed": {
-                "BUY_BUDGET": float((self.executed.get("BUY_BUDGET") or {}).get(ticker, 0.0)),
-                "SELL_QTY": int((self.executed.get("SELL_QTY") or {}).get(ticker, 0))
+                "BUY_BUDGET": self._safe_float((self.executed.get("BUY_BUDGET") or {}).get(ticker, 0.0)),
+                "SELL_QTY": int(self._safe_float((self.executed.get("SELL_QTY") or {}).get(ticker, 0)))
             }
         }
         fd = None
@@ -103,7 +110,6 @@ class ReversionStrategy:
             if fd is not None:
                 try: os.close(fd)
                 except OSError: pass
-            # 🚨 MODIFIED: [Case 08] os.path.exists 소각
             if temp_path:
                 try: os.remove(temp_path)
                 except OSError: pass
@@ -135,7 +141,6 @@ class ReversionStrategy:
             if fd is not None:
                 try: os.close(fd)
                 except OSError: pass
-            # 🚨 MODIFIED: [Case 08] os.path.exists 소각
             if temp_path:
                 try: os.remove(temp_path)
                 except OSError: pass
@@ -151,6 +156,11 @@ class ReversionStrategy:
         return None
 
     def ensure_failsafe_snapshot(self, ticker, curr_p, prev_c, alloc_cash, q_data, total_kis_qty, avwap_qty):
+        # 🚨 MODIFIED: 진입 파라미터 Type-Safety 절대 방어막 결속
+        curr_p = self._safe_float(curr_p)
+        prev_c = self._safe_float(prev_c)
+        alloc_cash = self._safe_float(alloc_cash)
+        
         snap = self.load_daily_snapshot(ticker)
         if snap is not None:
             return snap
@@ -180,12 +190,18 @@ class ReversionStrategy:
         
         if side == "BUY":
             spent = safe_qty * safe_price
-            self.executed["BUY_BUDGET"][ticker] = float((self.executed.get("BUY_BUDGET") or {}).get(ticker, 0.0)) + spent
+            self.executed["BUY_BUDGET"][ticker] = self._safe_float((self.executed.get("BUY_BUDGET") or {}).get(ticker, 0.0)) + spent
         else:
-            self.executed["SELL_QTY"][ticker] = int((self.executed.get("SELL_QTY") or {}).get(ticker, 0)) + safe_qty
+            self.executed["SELL_QTY"][ticker] = int(self._safe_float((self.executed.get("SELL_QTY") or {}).get(ticker, 0))) + safe_qty
         self._save_state(ticker)
 
     def get_dynamic_plan(self, ticker, curr_p, prev_c, current_weight, vwap_status, min_idx, alloc_cash, q_data, is_snapshot_mode=False, market_type="REG"):
+        # 🚨 MODIFIED: 진입 파라미터 Type-Safety 절대 방어막 결속
+        curr_p = self._safe_float(curr_p)
+        prev_c = self._safe_float(prev_c)
+        current_weight = self._safe_float(current_weight)
+        alloc_cash = self._safe_float(alloc_cash)
+
         self._load_state_if_needed(ticker)
 
         cached_plan = self.load_daily_snapshot(ticker)
@@ -196,11 +212,12 @@ class ReversionStrategy:
         total_q = sum(int(self._safe_float(item.get("qty"))) for item in valid_q_data)
         total_inv = sum(self._safe_float(item.get('qty')) * self._safe_float(item.get('price')) for item in valid_q_data)
         
-        dates_in_queue = sorted(list(set(item.get('date') for item in valid_q_data if item.get('date'))), reverse=True)
+        # 🚨 MODIFIED: TypeError(비교 불가) 방어를 위한 str() 캐스팅 결속
+        dates_in_queue = sorted(list(set(str(item.get('date', '')) for item in valid_q_data if item.get('date'))), reverse=True)
         l1_qty, l1_price = 0, 0.0
         
         if dates_in_queue:
-            lots_1 = [item for item in valid_q_data if item.get('date') == dates_in_queue[0]]
+            lots_1 = [item for item in valid_q_data if str(item.get('date', '')) == dates_in_queue[0]]
             l1_qty = sum(int(self._safe_float(item.get('qty'))) for item in lots_1)
             l1_price = sum(self._safe_float(item.get('qty')) * self._safe_float(item.get('price')) for item in lots_1) / l1_qty if l1_qty > 0 else 0.0
         
@@ -227,7 +244,9 @@ class ReversionStrategy:
                 legacy_q = sum(int(self._safe_float(item.get("qty"))) for item in legacy_lots)
                 is_zero_start_session = (legacy_q == 0)
 
-        if is_zero_start_session or total_q == 0:
+        # 🚨 MODIFIED: [당일 지층 매수 앵커 최우선 락온] is_zero_start_session 플래그를 철저히 배제하고, 오직 팩트 물량(total_q)에 의존하여 타점을 연산.
+        # 당일 0주 새출발로 대규모 1차/2차 물량이 연속 체결되었음에도 1지층 평단가가 아닌 1.15배수(허공) 타점이 재생성되는 렌더링/논리 패러독스 완벽 소각.
+        if total_q == 0:
             p1_trigger = round(prev_c * 1.15, 2)
             p2_trigger = round(prev_c * 0.999, 2)
         else:
@@ -235,7 +254,7 @@ class ReversionStrategy:
             p1_trigger = round(safe_anchor * 0.9976, 2)
             p2_trigger = round(safe_anchor * 0.9887, 2)
 
-        rem_qty_total = max(0, int(total_q) - int((self.executed.get("SELL_QTY") or {}).get(ticker, 0)))
+        rem_qty_total = max(0, int(total_q) - int(self._safe_float((self.executed.get("SELL_QTY") or {}).get(ticker, 0))))
         available_l1 = min(l1_qty, rem_qty_total) if rem_qty_total > 0 else 0
         available_upper = min(upper_qty, rem_qty_total - available_l1) if rem_qty_total > 0 else 0
         
@@ -272,7 +291,7 @@ class ReversionStrategy:
         start_t = start_dt_kst.strftime("%H%M%S")
         end_t = end_dt_kst.strftime("%H%M%S")
 
-        total_spent = 0.0 if is_snapshot_mode else float((self.executed.get("BUY_BUDGET") or {}).get(ticker, 0.0))
+        total_spent = 0.0 if is_snapshot_mode else self._safe_float((self.executed.get("BUY_BUDGET") or {}).get(ticker, 0.0))
         
         seed_val = self._safe_float(self.cfg.get_seed(ticker))
         daily_limit = seed_val * 0.15
@@ -297,14 +316,15 @@ class ReversionStrategy:
             elif q2 == 0 and q1 > 0:
                 q1 = math.floor(rem_budget / p1_trigger) if p1_trigger > 0 else 0
             
+            # 🚨 MODIFIED: [V-REV 로컬 슬라이싱 엔진] KIS 서버 VWAP 10주 제약 파기 및 자체 슬라이싱 엔진에 100% 위임 (무조건 VWAP 태그 락온)
             if q1 > 0:
-                ord_type = "VWAP" if q1 >= 10 else "LOC"
-                desc_str = "VWAP매수(Buy1)" if ord_type == "VWAP" else "LOC매수(Buy1)"
-                orders.append({"side": "BUY", "qty": q1, "price": p1_trigger, "type": ord_type, "start_time": start_t if ord_type == "VWAP" else None, "end_time": end_t if ord_type == "VWAP" else None, "desc": desc_str})
+                ord_type = "VWAP"
+                desc_str = "VWAP매수(Buy1)"
+                orders.append({"side": "BUY", "qty": q1, "price": p1_trigger, "type": ord_type, "start_time": start_t, "end_time": end_t, "desc": desc_str})
             if q2 > 0:
-                ord_type = "VWAP" if q2 >= 10 else "LOC"
-                desc_str = "VWAP매수(Buy2)" if ord_type == "VWAP" else "LOC매수(Buy2)"
-                orders.append({"side": "BUY", "qty": q2, "price": p2_trigger, "type": ord_type, "start_time": start_t if ord_type == "VWAP" else None, "end_time": end_t if ord_type == "VWAP" else None, "desc": desc_str})
+                ord_type = "VWAP"
+                desc_str = "VWAP매수(Buy2)"
+                orders.append({"side": "BUY", "qty": q2, "price": p2_trigger, "type": ord_type, "start_time": start_t, "end_time": end_t, "desc": desc_str})
         
         if rem_qty_total > 0:
             sell_dict = {}
@@ -316,7 +336,8 @@ class ReversionStrategy:
                 
             for price in sorted(sell_dict.keys()):
                 s_qty = sell_dict[price]
-                ord_type = "VWAP" if s_qty >= 10 else "LOC"
+                # 🚨 MODIFIED: [V-REV 로컬 슬라이싱 엔진] KIS 서버 VWAP 10주 제약 파기 및 전면 자체 VWAP 위임
+                ord_type = "VWAP"
                 
                 if price == trigger_l1 and price == trigger_upper:
                     desc_str = "통합탈출"
@@ -329,8 +350,8 @@ class ReversionStrategy:
                     
                 orders.append({
                     "side": "SELL", "qty": s_qty, "price": price, "type": ord_type, 
-                    "start_time": start_t if ord_type == "VWAP" else None, 
-                    "end_time": end_t if ord_type == "VWAP" else None, 
+                    "start_time": start_t, 
+                    "end_time": end_t, 
                     "desc": desc_str
                 })
         

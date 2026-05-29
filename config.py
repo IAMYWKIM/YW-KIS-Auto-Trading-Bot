@@ -1,16 +1,18 @@
 # ==========================================================
 # FILE: config.py
 # ==========================================================
-# MODIFIED: [V54.03 JSON 락온(Mutex) 방어막 전면 이식]
-# MODIFIED: [Case 34] 락온 센티널 파일 고아화(Orphan Lock) 맹점 영구 소각
-# MODIFIED: [Float 붕괴 방어] JSON 오염(None, 콤마 문자열)으로 인한 수학 연산 마비 원천 봉쇄
-# MODIFIED: [TOCTOU 레이스 컨디션 수술] os.path.exists 동기스캔 전면 소각 및 EAFP 패턴 100% 락온
-# MODIFIED: [AttributeError 붕괴 방어] JSON 내부 요소 오염 시 발생하는 타입 캐스팅 에러를 원천 차단하기 위한 `isinstance` 정밀 쉴드 100% 주입 완료
-# MODIFIED: [SSOT 코어 동기화] archive_graduation에서 history 장부 로드 시 중복 하드코딩을 소각하고, 무결성 필터링이 적용된 get_history() 100% 참조 락온
-# MODIFIED: [ValueError 붕괴 방어] 텔레그램 chat_id.dat 오염 시 발생하는 정수 캐스팅 에러(ValueError) 원천 차단
-# MODIFIED: [TypeError 붕괴 방어] 외부 매개변수 결측치(None/str) 유입에 대비한 Iterable(`or []`) 및 객체(`isinstance`) 안전망 100% 결속
-# MODIFIED: [외부 오염 붕괴 방어] `version_history.py` 오염 시 `get_latest_version`에서 발생하는 TypeError 즉사 버그 원천 차단 (`isinstance(history, list)` 락온)
+# 🚨 MODIFIED: [V-REV 슬라이싱 수학 무결성 락온] VWAP_PROFILES를 한계 가중치(Marginal)에서 누적 가중치(Cumulative, CDF)로 100% 교정하여 소량 수량의 절사(Round 0) 패러독스 원천 소각 및 15:56에 정확히 1.0(100%) 도달 보장.
+# 🚨 MODIFIED: [V54.03 JSON 락온(Mutex) 방어막 전면 이식]
+# 🚨 MODIFIED: [Case 34] 락온 센티널 파일 고아화(Orphan Lock) 맹점 영구 소각
+# 🚨 MODIFIED: [Float 붕괴 방어] JSON 오염(None, 콤마 문자열)으로 인한 수학 연산 마비 원천 봉쇄
+# 🚨 MODIFIED: [TOCTOU 레이스 컨디션 수술] os.path.exists 동기스캔 전면 소각 및 EAFP 패턴 100% 락온
+# 🚨 MODIFIED: [AttributeError 붕괴 방어] JSON 내부 요소 오염 시 발생하는 타입 캐스팅 에러를 원천 차단하기 위한 `isinstance` 정밀 쉴드 100% 주입 완료
+# 🚨 MODIFIED: [SSOT 코어 동기화] archive_graduation에서 history 장부 로드 시 중복 하드코딩을 소각하고, 무결성 필터링이 적용된 get_history() 100% 참조 락온
+# 🚨 MODIFIED: [ValueError 붕괴 방어] 텔레그램 chat_id.dat 오염 시 발생하는 정수 캐스팅 에러(ValueError) 원천 차단
+# 🚨 MODIFIED: [TypeError 붕괴 방어] 외부 매개변수 결측치(None/str) 유입에 대비한 Iterable(`or []`) 및 객체(`isinstance`) 안전망 100% 결속
+# 🚨 MODIFIED: [외부 오염 붕괴 방어] `version_history.py` 오염 시 `get_latest_version`에서 발생하는 TypeError 즉사 버그 원천 차단 (`isinstance(history, list)` 락온)
 # 🚨 MODIFIED: [Indentation 붕괴 수술] set_manual_vwap_mode 등 여러 메서드 내부의 띄어쓰기(Space) 불일치로 인한 IndentationError 즉사 버그 완벽 교정
+# 🚨 MODIFIED: [로깅 증발 뇌관 소각] 백그라운드 구동 시 증발하는 print() 구문을 logging.warning/error 체계로 전면 팩트 교체
 # ==========================================================
 
 import json
@@ -21,6 +23,7 @@ import math
 import time
 import shutil
 import tempfile
+import logging
 
 import threading
 try:
@@ -33,14 +36,23 @@ try:
 except ImportError:
     VERSION_HISTORY = ["V14.x [-] 버전 기록 파일(version_history.py)을 찾을 수 없습니다."]
 
+# 🚨 MODIFIED: [수학적 무결성 교정] 한계 가중치 -> 누적 가중치(CDF)로 변환하여 소량 물량 Slicing 시 발생하는 절사(Truncate to 0) 붕괴 원천 차단
 VWAP_PROFILES = {
     "SOXL": {
-        "15:27": 0.010835, "15:28": 0.010105, "15:29": 0.010360, "15:30": 0.010940, "15:31": 0.011123,
-        "15:32": 0.011697, "15:33": 0.012039, "15:34": 0.012681, "15:35": 0.013115, "15:36": 0.013911,
-        "15:37": 0.014932, "15:38": 0.015402, "15:39": 0.016528, "15:40": 0.017321, "15:41": 0.018455,
-        "15:42": 0.020241, "15:43": 0.021198, "15:44": 0.023076, "15:45": 0.024557, "15:46": 0.026961,
-        "15:47": 0.030867, "15:48": 0.033476, "15:49": 0.037601, "15:50": 0.041495, "15:51": 0.047717,
-        "15:52": 0.055668, "15:53": 0.066270, "15:54": 0.081758, "15:55": 0.109401, "15:56": 0.180271
+        "15:27": 0.010835, "15:28": 0.020940, "15:29": 0.031300, "15:30": 0.042240, "15:31": 0.053363,
+        "15:32": 0.065060, "15:33": 0.077099, "15:34": 0.089780, "15:35": 0.102895, "15:36": 0.116806,
+        "15:37": 0.131738, "15:38": 0.147140, "15:39": 0.163668, "15:40": 0.180989, "15:41": 0.199444,
+        "15:42": 0.219685, "15:43": 0.240883, "15:44": 0.263959, "15:45": 0.288516, "15:46": 0.315477,
+        "15:47": 0.346344, "15:48": 0.379820, "15:49": 0.417421, "15:50": 0.458916, "15:51": 0.506633,
+        "15:52": 0.562301, "15:53": 0.628571, "15:54": 0.710329, "15:55": 0.819730, "15:56": 1.000000
+    },
+    "TQQQ": {
+        "15:27": 0.010835, "15:28": 0.020940, "15:29": 0.031300, "15:30": 0.042240, "15:31": 0.053363,
+        "15:32": 0.065060, "15:33": 0.077099, "15:34": 0.089780, "15:35": 0.102895, "15:36": 0.116806,
+        "15:37": 0.131738, "15:38": 0.147140, "15:39": 0.163668, "15:40": 0.180989, "15:41": 0.199444,
+        "15:42": 0.219685, "15:43": 0.240883, "15:44": 0.263959, "15:45": 0.288516, "15:46": 0.315477,
+        "15:47": 0.346344, "15:48": 0.379820, "15:49": 0.417421, "15:50": 0.458916, "15:51": 0.506633,
+        "15:52": 0.562301, "15:53": 0.628571, "15:54": 0.710329, "15:55": 0.819730, "15:56": 1.000000
     }
 }
 
@@ -106,7 +118,7 @@ class ConfigManager:
             lock_file_path = self.FILES["LOCKS"]
             dir_name = os.path.dirname(lock_file_path) or '.'
             os.makedirs(dir_name, exist_ok=True)
-                
+        
             sentinel = lock_file_path + ".lock"
             with open(sentinel, 'w') as lf:
                 if fcntl:
@@ -119,6 +131,7 @@ class ConfigManager:
                 finally:
                     if fcntl:
                         fcntl.flock(lf, fcntl.LOCK_UN)
+                
                     try:
                         os.remove(sentinel)
                     except OSError:
@@ -134,11 +147,12 @@ class ConfigManager:
         except FileNotFoundError:
             return default if default is not None else {}
         except Exception as e:
-            print(f"⚠️ [Config] JSON 로드 에러 ({filename}): {e}")
+            # 🚨 MODIFIED: print 소각 및 logging 락온
+            logging.warning(f"⚠️ [Config] JSON 로드 에러 ({filename}): {e}")
             try:
                 shutil.copy(filename, filename + f".bak_{int(time.time())}")
             except Exception as backup_e:
-                print(f"⚠️ [Config] 백업 실패: {backup_e}")
+                logging.warning(f"⚠️ [Config] 백업 실패: {backup_e}")
             return default if default is not None else {}
 
     def _save_json(self, filename, data):
@@ -154,11 +168,12 @@ class ConfigManager:
                 json.dump(data, f, ensure_ascii=False, indent=2)
                 f.flush()  
                 os.fsync(f.fileno()) 
-                
+      
             os.replace(temp_path, filename)
             temp_path = None
         except Exception as e:
-            print(f"❌ [Config] JSON 저장 중 치명적 에러 발생 ({filename}): {e}")
+            # 🚨 MODIFIED: print 소각 및 logging 락온
+            logging.error(f"❌ [Config] JSON 저장 중 치명적 에러 발생 ({filename}): {e}")
             if fd is not None:
                 try: os.close(fd)
                 except OSError: pass
@@ -173,7 +188,7 @@ class ConfigManager:
         except FileNotFoundError:
             return default
         except Exception as e:
-            print(f"⚠️ [Config] 파일 로드 에러 ({filename}): {e}")
+            logging.warning(f"⚠️ [Config] 파일 로드 에러 ({filename}): {e}")
             return default
 
     def _save_file(self, filename, content):
@@ -193,7 +208,7 @@ class ConfigManager:
             os.replace(temp_path, filename)
             temp_path = None
         except Exception as e:
-            print(f"❌ [Config] 텍스트 파일 저장 에러 ({filename}): {e}")
+            logging.error(f"❌ [Config] 텍스트 파일 저장 에러 ({filename}): {e}")
             if fd is not None:
                 try: os.close(fd)
                 except OSError: pass
@@ -218,7 +233,7 @@ class ConfigManager:
             d = self._load_json(self.FILES["VREV_GAP_SWITCH_CFG"], {})
             d[ticker] = bool(v)
             self._save_json(self.FILES["VREV_GAP_SWITCH_CFG"], d)
-            
+      
     def get_avwap_gap_threshold(self, ticker):
         return self._safe_float(self._load_json(self.FILES["AVWAP_GAP_THRESH_CFG"], {}).get(ticker, -0.67))
 
@@ -318,7 +333,7 @@ class ConfigManager:
             target_recs = [r for r in ledger if r.get('ticker') == ticker]
             
             if len(target_recs) > 0:
-                print(f"⚠️ [보안 차단] {ticker}의 장부 기록이 이미 존재하여 파괴적 Genesis 덮어쓰기를 차단했습니다.")
+                logging.warning(f"⚠️ [보안 차단] {ticker}의 장부 기록이 이미 존재하여 파괴적 Genesis 덮어쓰기를 차단했습니다.")
                 return
 
             max_id = max([int(self._safe_float(r.get('id', 0))) for r in ledger] + [0])
@@ -376,7 +391,7 @@ class ConfigManager:
             target_recs = [r for r in ledger if r.get('ticker') == ticker]
             
             if len(target_recs) > 0:
-                print(f"⚠️ [보안 차단] {ticker}의 장부 기록이 이미 존재하여 파괴적 INIT 덮어쓰기를 차단했습니다.")
+                logging.warning(f"⚠️ [보안 차단] {ticker}의 장부 기록이 이미 존재하여 파괴적 INIT 덮어쓰기를 차단했습니다.")
                 return
                 
             est = ZoneInfo('America/New_York')
@@ -695,7 +710,6 @@ class ConfigManager:
     def set_version(self, t, v):
         with self._io_lock:
             if t == "TQQQ": v = "V14"
-            # 🚨 MODIFIED: [Indentation 붕괴 수술] 들여쓰기 4칸 정밀 락온
             d = self._load_json(self.FILES["VERSION_CFG"], self.DEFAULT_VERSION)
             d[t] = v
             self._save_json(self.FILES["VERSION_CFG"], d)
@@ -721,7 +735,6 @@ class ConfigManager:
         
     def set_sniper_multiplier(self, t, v):
         with self._io_lock:
-            # 🚨 MODIFIED: [Indentation 붕괴 수술] 13칸->12칸 정밀 교정
             d = self._load_json(self.FILES["SNIPER_MULTIPLIER_CFG"], self.DEFAULT_SNIPER_MULTIPLIER)
             d[t] = self._safe_float(v)
             self._save_json(self.FILES["SNIPER_MULTIPLIER_CFG"], d)
@@ -758,7 +771,6 @@ class ConfigManager:
         
     def set_manual_vwap_mode(self, ticker, v):
         with self._io_lock:
-            # 🚨 MODIFIED: [Indentation 붕괴 수술] 13칸->12칸 정밀 교정
             d = self._load_json(self.FILES["MANUAL_VWAP_CFG"], {})
             d[ticker] = bool(v)
             self._save_json(self.FILES["MANUAL_VWAP_CFG"], d)
